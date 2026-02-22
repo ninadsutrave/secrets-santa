@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8" />
+  <title>SecretsSanta</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div class="container">
+    <h2>🎅 SecretsSanta</h2>
+    <div class="subtitle">Consul Companion</div>
+
+    <button id="dark-toggle">🌙</button>
+
+    <div id="status"></div>
+
+    <div class="controls">
+      <button id="loadBtn">Load Secrets</button>
+      <button id="grantPermissionBtn" class="hidden">Grant Santa Access</button>
+      <button id="loadSavedBtn" disabled>Load Saved Collections</button>
+      <button id="saveBtn" class="hidden" disabled>Save Collection</button>
+      <button id="compareBtn" class="hidden" disabled>Compare</button>
+      <button id="downloadBtn" class="hidden" disabled>Download .env</button>
+      <button id="intellijBtn" class="hidden" disabled>Copy IntelliJ</button>
+    </div>
+
+    <div id="search-container">
+      <input type="text" id="search-input" placeholder="Search keys..." />
+    </div>
+
+    <table id="secretsTable" class="hidden">
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Value</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="secretsBody"></tbody>
+    </table>
+
+    <ul id="savedList" class="hidden"></ul>
+
+    <div id="loader" class="hidden">
+      <div class="spinner"></div>
+    </div>
+
+    <footer class="footer">
+      Copyright © <a href="https://ninadsutrave.in" target="_blank" rel="noreferrer">Ninad Sutrave</a>
+    </footer>
+  </div>
+
+  <script src="../shared/constants.js"></script>
+  <script src="../shared/storage.js"></script>
+  <script src="popup.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "SecretsSanta",
+  "description": "Securely view, save and compare Consul KV secrets.",
+  "homepage_url": "https://ninadsutrave.in",
+  "author": {
+    "name": "Ninad Sutrave",
+    "email": "ninad@ninadsutrave.in"
+  },
+  "version": "1.0.0",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "storage",
+    "tabs",
+    "webRequest",
+    "scripting"
+  ],
+  "optional_host_permissions": [
+    "<all_urls>"
+  ],
+  "commands": {
+    "open-secrets-santa": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Open SecretsSanta"
+    }
+  },
+  "background": {
+    "service_worker": "src/background/background.js"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "SecretsSanta"
+  }
+}
