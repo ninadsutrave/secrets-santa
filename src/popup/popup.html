@@ -9,21 +9,27 @@
 
 <body>
   <div class="container">
-    <h2>🎅 SecretsSanta</h2>
-    <div class="subtitle">Consul Companion</div>
-
-    <button id="dark-toggle">🌙</button>
+    <div class="header">
+      <div class="brand">
+        <div class="brand-mark">SS</div>
+        <div class="brand-text">
+          <div class="brand-title">SecretsSanta</div>
+          <div class="brand-subtitle">Consul Companion</div>
+        </div>
+      </div>
+      <button id="dark-toggle" class="icon-button" aria-label="Toggle dark mode">🌙</button>
+    </div>
 
     <div id="status"></div>
 
     <div class="controls">
-      <button id="loadBtn">Load Secrets</button>
-      <button id="grantPermissionBtn" class="hidden">Grant Santa Access</button>
-      <button id="loadSavedBtn" disabled>Load Saved Collections</button>
-      <button id="saveBtn" class="hidden" disabled>Save Collection</button>
-      <button id="compareBtn" class="hidden" disabled>Compare</button>
-      <button id="downloadBtn" class="hidden" disabled>Download .env</button>
-      <button id="intellijBtn" class="hidden" disabled>Copy IntelliJ</button>
+      <button id="loadBtn" class="btn primary span-2">Load Secrets</button>
+      <button id="grantPermissionBtn" class="btn primary span-2 hidden">Grant Santa Access</button>
+      <button id="loadSavedBtn" class="btn" disabled>Load Saved</button>
+      <button id="saveBtn" class="btn" disabled>Save</button>
+      <button id="compareBtn" class="btn hidden" disabled>Compare</button>
+      <button id="downloadBtn" class="btn hidden" disabled>Download .env</button>
+      <button id="intellijBtn" class="btn hidden" disabled>Copy JetBrains</button>
     </div>
 
     <div id="search-container">

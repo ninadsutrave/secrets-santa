@@ -49,12 +49,16 @@ function showSearch() {
 }
 
 function setPostLoadVisible(visible) {
-  const controls = [saveBtn, downloadBtn, intellijBtn];
+  const controls = [downloadBtn, intellijBtn];
   controls.forEach((btn) => {
     if (!btn) return;
     btn.classList.toggle("hidden", !visible);
     btn.disabled = !visible;
   });
+  if (saveBtn) {
+    saveBtn.classList.remove("hidden");
+    saveBtn.disabled = !visible;
+  }
 }
 
 function setCompareVisible(visible, enabled = visible) {
@@ -243,6 +247,45 @@ async function tryCaptureTokenFromTab(tabId) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function fetchTokenFromBackground() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: CONSTANTS.MESSAGE_TYPES.FETCH_KEYS }, (res) => {
+      resolve(String(res?.token || ""));
+    });
+  });
+}
+
+async function primeTokenCaptureOnTab(tabId, dc) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      args: [dc],
+      func: (dcArg) => {
+        try {
+          const dc = String(dcArg || "");
+          const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
+          fetch(`/v1/acl/token/self${suffix}`, { credentials: "include" }).catch(() => {});
+          fetch(`/v1/session/node${suffix}`, { credentials: "include" }).catch(() => {});
+        } catch {}
+      }
+    });
+  } catch {}
+}
+
+async function ensureTokenAvailable(tabId, dc) {
+  await primeTokenCaptureOnTab(tabId, dc);
+  for (let i = 0; i < 8; i += 1) {
+    const token = await fetchTokenFromBackground();
+    if (token) return token;
+    await sleep(150);
+  }
+  return "";
+}
+
 function getCollections(callback) {
   STORAGE.getCollections(callback);
 }
@@ -306,9 +349,11 @@ function buildValueActions(key, value, valueContainer, actionsContainer) {
   textSpan.textContent = initialText;
   if (isSensitive) textSpan.classList.add("masked");
 
-  const copy = document.createElement("span");
-  copy.textContent = "📋";
-  copy.className = "value-copy";
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.textContent = "⧉";
+  copy.className = "icon-btn value-copy";
+  copy.title = "Copy";
   copy.addEventListener("click", (event) => {
     event.stopPropagation();
     navigator.clipboard.writeText(String(value));
@@ -329,26 +374,32 @@ function buildValueActions(key, value, valueContainer, actionsContainer) {
   }
 
   if (isSensitive) {
-    const eye = document.createElement("span");
-    eye.textContent = "👁";
-    eye.className = "eye";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.textContent = "🔒";
+    toggle.className = "icon-btn eye";
+    toggle.title = "Reveal";
 
     let visible = false;
-    eye.addEventListener("click", (event) => {
+    toggle.addEventListener("click", (event) => {
       event.stopPropagation();
       visible = !visible;
       textSpan.classList.remove("json-view");
       textSpan.textContent = visible ? String(value) : mask(String(value));
+      toggle.textContent = visible ? "🔓" : "🔒";
+      toggle.title = visible ? "Hide" : "Reveal";
     });
 
-    actionsContainer.appendChild(eye);
+    actionsContainer.appendChild(toggle);
     return;
   }
 
   if (isJSON) {
-    const jsonBtn = document.createElement("span");
-    jsonBtn.textContent = "{}";
-    jsonBtn.className = "json-btn";
+    const jsonBtn = document.createElement("button");
+    jsonBtn.type = "button";
+    jsonBtn.textContent = "⟦⟧";
+    jsonBtn.className = "icon-btn json-btn";
+    jsonBtn.title = "Pretty JSON";
 
     let expanded = false;
     jsonBtn.addEventListener("click", (event) => {
@@ -357,9 +408,11 @@ function buildValueActions(key, value, valueContainer, actionsContainer) {
       if (expanded) {
         textSpan.textContent = formattedJSON;
         textSpan.classList.add("json-view");
+        jsonBtn.title = "Collapse JSON";
       } else {
         textSpan.classList.remove("json-view");
         textSpan.textContent = truncate(formattedJSON, truncationLimit);
+        jsonBtn.title = "Pretty JSON";
       }
     });
 
@@ -418,6 +471,7 @@ function renderTable(data, isDiff = false) {
           labelEl.textContent = label;
 
           const lineValue = document.createElement("div");
+          lineValue.className = "diff-value";
           const lineActions = document.createElement("div");
           lineActions.className = "diff-actions";
 
@@ -677,7 +731,7 @@ function deleteCollection(id) {
   });
 }
 
-function loadSecretsForContext(ctx) {
+function loadSecretsForContext(ctx, tabId, attempt = 0) {
   setStatus("Fetching keys...");
   chrome.runtime.sendMessage(
     { type: CONSTANTS.MESSAGE_TYPES.FETCH_PAGE_VALUES, host: ctx.host, dc: ctx.dc, prefix: ctx.prefix },
@@ -689,6 +743,18 @@ function loadSecretsForContext(ctx) {
       }
       if (response.error) {
         const message = String(response.error || "");
+        const shouldRetry =
+          attempt === 0 &&
+          tabId &&
+          (message.toLowerCase().includes("acl not found") || message.toLowerCase().includes("no consul token captured"));
+        if (shouldRetry) {
+          showLoader(true);
+          setStatus("Refreshing Consul session…");
+          ensureTokenAvailable(tabId, ctx.dc).then(() => {
+            loadSecretsForContext(ctx, tabId, attempt + 1);
+          });
+          return;
+        }
         setStatus(message);
         return;
       }
@@ -751,7 +817,8 @@ loadBtn.addEventListener("click", async () => {
   }
 
   hideHostPermissionPrompt();
-  loadSecretsForContext(ctx);
+  await ensureTokenAvailable(tab.id, ctx.dc);
+  loadSecretsForContext(ctx, tab.id);
 });
 
 grantPermissionBtn.addEventListener("click", async () => {
@@ -769,7 +836,9 @@ grantPermissionBtn.addEventListener("click", async () => {
 
   hideHostPermissionPrompt();
   showLoader(true);
-  loadSecretsForContext(ctx);
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id) await ensureTokenAvailable(tab.id, ctx.dc);
+  loadSecretsForContext(ctx, tab?.id);
 });
 
 saveBtn.addEventListener("click", () => {
@@ -864,7 +933,7 @@ intellijBtn.addEventListener("click", () => {
     .join(";");
   const payload = pairs.length > 0 ? `${pairs};` : "";
   navigator.clipboard.writeText(payload);
-  setStatus("Copied IntelliJ format.");
+  setStatus("Copied JetBrains format.");
 });
 
 compareBtn.addEventListener("click", () => {
