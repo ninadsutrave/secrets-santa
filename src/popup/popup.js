@@ -12,6 +12,20 @@ const saveBtn = document.getElementById("saveBtn");
 const compareBtn = document.getElementById("compareBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 const intellijBtn = document.getElementById("intellijBtn");
+const envFileInput = document.getElementById("envFileInput");
+const uploadKeyValuesBtn = document.getElementById("uploadKeyValuesBtn");
+const uploadModal = document.getElementById("uploadModal");
+const uploadModalClose = document.getElementById("uploadModalClose");
+const uploadCancelBtn = document.getElementById("uploadCancelBtn");
+const uploadConfirmBtn = document.getElementById("uploadConfirmBtn");
+const uploadSummary = document.getElementById("uploadSummary");
+const uploadTabEnv = document.getElementById("uploadTabEnv");
+const uploadTabJetbrains = document.getElementById("uploadTabJetbrains");
+const uploadPanelEnv = document.getElementById("uploadPanelEnv");
+const uploadPanelJetbrains = document.getElementById("uploadPanelJetbrains");
+const chooseEnvFileBtn = document.getElementById("chooseEnvFileBtn");
+const envFileLabel = document.getElementById("envFileLabel");
+const jetbrainsPasteInput = document.getElementById("jetbrainsPasteInput");
 const table = document.getElementById("secretsTable");
 const tbody = document.getElementById("secretsBody");
 const savedList = document.getElementById("savedList");
@@ -20,10 +34,18 @@ const statusDiv = document.getElementById("status");
 const searchContainer = document.getElementById("search-container");
 const searchInput = document.getElementById("search-input");
 const darkToggle = document.getElementById("dark-toggle");
+const jsonModal = document.getElementById("jsonModal");
+const jsonModalClose = document.getElementById("jsonModalClose");
+const jsonModalDone = document.getElementById("jsonModalDone");
+const jsonModalCopy = document.getElementById("jsonModalCopy");
+const jsonModalTitle = document.getElementById("jsonModalTitle");
+const jsonModalBody = document.getElementById("jsonModalBody");
+const jsonModalMeta = document.getElementById("jsonModalMeta");
 
 let currentSecrets = {};
 let currentView = "table";
 let currentPrefix = "";
+let currentHost = "";
 let currentLoadedCollectionId = null;
 let isDiffView = false;
 let comparePickerOpen = false;
@@ -31,6 +53,8 @@ let compareSelectedIds = [];
 let diffLeftTitle = "";
 let diffRightTitle = "";
 let pendingConsulContext = null;
+let pendingUpload = null;
+let currentDataSource = "none";
 
 const SENSITIVE_REGEX = CONSTANTS.UI.SENSITIVE_KEY_REGEX;
 
@@ -56,7 +80,7 @@ function setPostLoadVisible(visible) {
     btn.disabled = !visible;
   });
   if (saveBtn) {
-    saveBtn.classList.remove("hidden");
+    saveBtn.classList.toggle("hidden", !visible);
     saveBtn.disabled = !visible;
   }
 }
@@ -79,11 +103,21 @@ function resetUI() {
   compareSelectedIds = [];
   diffLeftTitle = "";
   diffRightTitle = "";
+  currentHost = "";
   pendingConsulContext = null;
+  pendingUpload = null;
+  currentDataSource = "none";
   if (grantPermissionBtn) grantPermissionBtn.classList.add("hidden");
   setCompareVisible(false, false);
   if (searchContainer) searchContainer.classList.remove("visible");
   if (searchInput) searchInput.value = "";
+  if (envFileInput) envFileInput.value = "";
+  if (envFileLabel) envFileLabel.textContent = "No file chosen";
+  if (jetbrainsPasteInput) jetbrainsPasteInput.value = "";
+  if (uploadConfirmBtn) uploadConfirmBtn.disabled = true;
+  if (uploadSummary) uploadSummary.textContent = "0 keys ready";
+  if (uploadModal) uploadModal.classList.add("hidden");
+  if (jsonModal) jsonModal.classList.add("hidden");
 }
 
 function normalizeKeys(keys) {
@@ -109,8 +143,10 @@ function parseConsulContext(url) {
     if (uiIndex === -1 || kvIndex === -1) return null;
     const dc = parts[uiIndex + 1] || "";
     const prefix = parts.slice(kvIndex + 1).join("/");
-    if (!dc || !prefix) return null;
-    return { host: u.host, dc, prefix: prefix.endsWith("/") ? prefix : `${prefix}/` };
+    const scheme = String(u.protocol || "").replace(":", "") || "https";
+    if (!dc) return null;
+    const normalizedPrefix = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
+    return { scheme, host: u.host, dc, prefix: normalizedPrefix };
   } catch {
     return null;
   }
@@ -251,38 +287,169 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function fetchTokenFromBackground() {
+function fetchTokenFromBackground(host) {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: CONSTANTS.MESSAGE_TYPES.FETCH_KEYS }, (res) => {
+    chrome.runtime.sendMessage({ type: CONSTANTS.MESSAGE_TYPES.FETCH_KEYS, host }, (res) => {
       resolve(String(res?.token || ""));
     });
   });
 }
 
-async function primeTokenCaptureOnTab(tabId, dc) {
+async function validateTokenOnTab(tabId, dc, token) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      args: [dc, token],
+      func: async (dcArg, tokenArg) => {
+        try {
+          const dc = String(dcArg || "");
+          const token = String(tokenArg || "");
+          if (!token) return false;
+          const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
+          const res = await fetch(`/v1/acl/token/self${suffix}`, {
+            method: "GET",
+            credentials: "include",
+            headers: { "X-Consul-Token": token }
+          });
+          return res.ok;
+        } catch {
+          return false;
+        }
+      }
+    });
+    return Boolean(results?.[0]?.result);
+  } catch {
+    return false;
+  }
+}
+
+async function captureAndStoreTokenFromConsulStorage(tabId, host, dc) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: () => {
+        const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const uuidInText = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+        const plausibleToken = (value) => {
+          const v = String(value || "").trim();
+          if (!v) return "";
+          if (uuidLike.test(v)) return v;
+          const match = v.match(uuidInText);
+          if (match?.[0] && uuidLike.test(match[0])) return match[0];
+          if (v.length < 20 || v.length > 256) return "";
+          if (/\s/.test(v)) return "";
+          return v;
+        };
+        const keyOk = (k) => {
+          const key = String(k || "").toLowerCase();
+          if (!key) return false;
+          const hasVendor = key.includes("consul") || key.includes("hashicorp") || key.includes("hcp");
+          const hasType = key.includes("token") || key.includes("acl");
+          if (hasVendor && hasType) return true;
+          if (key.includes("consul") && key.includes("secret")) return true;
+          return false;
+        };
+
+        const candidates = [];
+
+        const findUuidDeep = (obj, depth = 0) => {
+          if (!obj || depth > 5) return "";
+          if (typeof obj === "string") return plausibleToken(obj);
+          if (typeof obj !== "object") return "";
+          if (Array.isArray(obj)) {
+            for (const item of obj) {
+              const found = findUuidDeep(item, depth + 1);
+              if (found) return found;
+            }
+            return "";
+          }
+          for (const key in obj) {
+            const found = findUuidDeep(obj[key], depth + 1);
+            if (found) return found;
+          }
+          return "";
+        };
+
+        const tryAdd = (k, v) => {
+          if (!keyOk(k)) return;
+          const raw = String(v || "").trim();
+          if (!raw) return;
+          let token = plausibleToken(raw);
+          if (!token) {
+            try {
+              token = findUuidDeep(JSON.parse(raw));
+            } catch {
+              token = "";
+            }
+          }
+          if (!token) return;
+          let score = 0;
+          const lowerKey = String(k || "").toLowerCase();
+          if (lowerKey.includes("token")) score += 6;
+          if (lowerKey.includes("acl")) score += 3;
+          candidates.push({ value: token, score });
+        };
+
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const k = localStorage.key(i);
+          tryAdd(k, localStorage.getItem(k));
+        }
+        for (let i = 0; i < sessionStorage.length; i += 1) {
+          const k = sessionStorage.key(i);
+          tryAdd(k, sessionStorage.getItem(k));
+        }
+
+        candidates.sort((a, b) => b.score - a.score);
+        return candidates[0]?.value || "";
+      }
+    });
+
+    const token = String(results?.[0]?.result || "");
+    if (!token) return "";
+    const valid = await validateTokenOnTab(tabId, dc, token);
+    if (!valid) return "";
+    STORAGE.setTokenForHost(host, token);
+    await new Promise((resolve) =>
+      chrome.runtime.sendMessage({ type: CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host }, () => resolve())
+    );
+    return token;
+  } catch {
+    return "";
+  }
+}
+
+async function primeTokenCaptureOnTab(tabId, dc, prefix) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      args: [dc],
-      func: (dcArg) => {
+      world: "MAIN",
+      args: [dc, prefix],
+      func: (dcArg, prefixArg) => {
         try {
           const dc = String(dcArg || "");
           const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
-          fetch(`/v1/acl/token/self${suffix}`, { credentials: "include" }).catch(() => {});
-          fetch(`/v1/session/node${suffix}`, { credentials: "include" }).catch(() => {});
+          const p = String(prefixArg || "");
+          const kvPath = p ? `/v1/kv/${encodeURI(p)}` : "/v1/kv/";
+          const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
+          fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => {});
+          fetch(kvUrl, { credentials: "include" }).catch(() => {});
         } catch {}
       }
     });
   } catch {}
 }
 
-async function ensureTokenAvailable(tabId, dc) {
-  await primeTokenCaptureOnTab(tabId, dc);
+async function ensureTokenAvailable(tabId, host, dc, prefix) {
+  await primeTokenCaptureOnTab(tabId, dc, prefix);
   for (let i = 0; i < 8; i += 1) {
-    const token = await fetchTokenFromBackground();
+    const token = await fetchTokenFromBackground(host);
     if (token) return token;
     await sleep(150);
   }
+  const token = await captureAndStoreTokenFromConsulStorage(tabId, host, dc);
+  if (token) return token;
   return "";
 }
 
@@ -291,8 +458,18 @@ function getCollections(callback) {
 }
 
 function updateSavedAvailability() {
-  getCollections((collections) => {
-    loadSavedBtn.disabled = !collections || collections.length === 0;
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs?.[0];
+    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
+    const host = ctx?.host || currentHost || "";
+    if (!host) {
+      loadSavedBtn.disabled = true;
+      return;
+    }
+    getCollections((collections) => {
+      const scoped = (collections || []).filter((c) => (c.host || "") === host);
+      loadSavedBtn.disabled = scoped.length === 0;
+    });
   });
 }
 
@@ -310,6 +487,106 @@ function truncate(str, max = 80) {
 function mask(value) {
   return "•".repeat(Math.min(value.length, 12));
 }
+
+function parseDotEnv(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const entries = [];
+  let skipped = 0;
+
+  lines.forEach((raw) => {
+    const line = String(raw || "").trim();
+    if (!line) return;
+    if (line.startsWith("#")) return;
+
+    const withoutExport = line.startsWith("export ") ? line.slice(7).trim() : line;
+    const idx = withoutExport.indexOf("=");
+    if (idx <= 0) {
+      skipped += 1;
+      return;
+    }
+
+    const key = withoutExport.slice(0, idx).trim();
+    let value = withoutExport.slice(idx + 1);
+
+    const isQuoted =
+      (value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"));
+    if (!isQuoted) {
+      const hashIndex = value.indexOf(" #");
+      if (hashIndex !== -1) value = value.slice(0, hashIndex);
+      const hashIndex2 = value.indexOf("\t#");
+      if (hashIndex2 !== -1) value = value.slice(0, hashIndex2);
+    }
+
+    value = value.trim();
+    if (value.startsWith("\"") && value.endsWith("\"")) {
+      value = value.slice(1, -1);
+      value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t").replace(/\\"/g, "\"");
+    } else if (value.startsWith("'") && value.endsWith("'")) {
+      value = value.slice(1, -1);
+    }
+
+    if (!key) {
+      skipped += 1;
+      return;
+    }
+
+    entries.push({ key, value });
+  });
+
+  return { entries, skipped };
+}
+
+function parseJetBrainsPairs(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return { entries: [], skipped: 0 };
+
+  const parts = raw.split(";");
+  const entries = [];
+  let skipped = 0;
+
+  parts.forEach((p) => {
+    const part = String(p || "").trim();
+    if (!part) return;
+    const idx = part.indexOf("=");
+    if (idx <= 0) {
+      skipped += 1;
+      return;
+    }
+    const key = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1);
+    if (!key) {
+      skipped += 1;
+      return;
+    }
+    entries.push({ key, value });
+  });
+
+  return { entries, skipped };
+}
+
+function setJsonModalOpen(open) {
+  if (!jsonModal) return;
+  jsonModal.classList.toggle("hidden", !open);
+}
+
+function openJsonModal(title, value) {
+  if (jsonModalTitle) jsonModalTitle.textContent = title || "JSON";
+  if (jsonModalBody) jsonModalBody.textContent = String(value || "");
+  if (jsonModalMeta) jsonModalMeta.textContent = title ? `Key: ${title}` : "";
+  setJsonModalOpen(true);
+}
+
+function closeJsonModal() {
+  setJsonModalOpen(false);
+}
+
+jsonModalClose?.addEventListener("click", closeJsonModal);
+jsonModalDone?.addEventListener("click", closeJsonModal);
+jsonModalCopy?.addEventListener("click", () => {
+  if (!jsonModalBody) return;
+  navigator.clipboard.writeText(jsonModalBody.textContent || "");
+  setStatus("Copied JSON");
+});
 
 function isValidJSON(str) {
   try {
@@ -349,6 +626,9 @@ function buildValueActions(key, value, valueContainer, actionsContainer) {
   textSpan.textContent = initialText;
   if (isSensitive) textSpan.classList.add("masked");
 
+  valueWrap.appendChild(textSpan);
+  valueContainer.appendChild(valueWrap);
+
   const copy = document.createElement("button");
   copy.type = "button";
   copy.textContent = "⧉";
@@ -359,10 +639,7 @@ function buildValueActions(key, value, valueContainer, actionsContainer) {
     navigator.clipboard.writeText(String(value));
     setStatus(`Copied ${key}`);
   });
-
-  valueWrap.appendChild(textSpan);
-  valueWrap.appendChild(copy);
-  valueContainer.appendChild(valueWrap);
+  actionsContainer.appendChild(copy);
 
   if (!isSensitive && !isJSON && typeof value === "string" && value.length > truncationLimit) {
     let expanded = false;
@@ -400,20 +677,9 @@ function buildValueActions(key, value, valueContainer, actionsContainer) {
     jsonBtn.textContent = "⟦⟧";
     jsonBtn.className = "icon-btn json-btn";
     jsonBtn.title = "Pretty JSON";
-
-    let expanded = false;
     jsonBtn.addEventListener("click", (event) => {
       event.stopPropagation();
-      expanded = !expanded;
-      if (expanded) {
-        textSpan.textContent = formattedJSON;
-        textSpan.classList.add("json-view");
-        jsonBtn.title = "Collapse JSON";
-      } else {
-        textSpan.classList.remove("json-view");
-        textSpan.textContent = truncate(formattedJSON, truncationLimit);
-        jsonBtn.title = "Pretty JSON";
-      }
+      openJsonModal(key, formattedJSON);
     });
 
     actionsContainer.appendChild(jsonBtn);
@@ -426,13 +692,17 @@ function renderTable(data, isDiff = false) {
   if (savedList) savedList.classList.add("hidden");
   if (table) table.classList.remove("hidden");
   isDiffView = isDiff;
+  if (intellijBtn) {
+    intellijBtn.classList.toggle("hidden", false);
+    intellijBtn.disabled = isDiff;
+  }
 
   if (table) {
     const headers = table.querySelectorAll("th");
     if (headers.length >= 3) {
       headers[0].textContent = "Key";
       headers[1].textContent = isDiff
-        ? `Values (A: ${diffLeftTitle || "—"} · B: ${diffRightTitle || "—"})`
+        ? `Values\nA: ${diffLeftTitle || "—"}\nB: ${diffRightTitle || "—"}`
         : "Value";
       headers[2].textContent = isDiff ? "Type" : "Actions";
     }
@@ -699,8 +969,10 @@ function renderCollectionsList(collections) {
       }
       currentSecrets = collection.keys;
       currentPrefix = collection.title || "";
+      currentHost = collection.host || currentHost || "";
       currentLoadedCollectionId = collection.id || null;
       isDiffView = false;
+      currentDataSource = "saved";
       renderTable(currentSecrets);
       setPostLoadVisible(true);
       setCompareVisible(true, true);
@@ -734,7 +1006,7 @@ function deleteCollection(id) {
 function loadSecretsForContext(ctx, tabId, attempt = 0) {
   setStatus("Fetching keys...");
   chrome.runtime.sendMessage(
-    { type: CONSTANTS.MESSAGE_TYPES.FETCH_PAGE_VALUES, host: ctx.host, dc: ctx.dc, prefix: ctx.prefix },
+    { type: CONSTANTS.MESSAGE_TYPES.FETCH_PAGE_VALUES, scheme: ctx.scheme, host: ctx.host, dc: ctx.dc, prefix: ctx.prefix },
     (response) => {
       showLoader(false);
       if (chrome.runtime.lastError || !response) {
@@ -750,7 +1022,7 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
         if (shouldRetry) {
           showLoader(true);
           setStatus("Refreshing Consul session…");
-          ensureTokenAvailable(tabId, ctx.dc).then(() => {
+          ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix).then(() => {
             loadSecretsForContext(ctx, tabId, attempt + 1);
           });
           return;
@@ -772,8 +1044,10 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
 
       currentPrefix = response?.prefix || `/${ctx.prefix.replace(/\/$/, "")}`;
       currentSecrets = normalized;
+      currentHost = ctx.host || "";
       currentLoadedCollectionId = null;
       isDiffView = false;
+      currentDataSource = "page";
 
       renderTable(currentSecrets);
       setPostLoadVisible(true);
@@ -817,7 +1091,7 @@ loadBtn.addEventListener("click", async () => {
   }
 
   hideHostPermissionPrompt();
-  await ensureTokenAvailable(tab.id, ctx.dc);
+  await ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
   loadSecretsForContext(ctx, tab.id);
 });
 
@@ -837,8 +1111,151 @@ grantPermissionBtn.addEventListener("click", async () => {
   hideHostPermissionPrompt();
   showLoader(true);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id) await ensureTokenAvailable(tab.id, ctx.dc);
+  if (tab?.id) await ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
   loadSecretsForContext(ctx, tab?.id);
+});
+
+function setUploadModalOpen(open) {
+  if (!uploadModal) return;
+  uploadModal.classList.toggle("hidden", !open);
+}
+
+function setUploadTab(tab) {
+  const isEnv = tab === "env";
+  if (uploadTabEnv) {
+    uploadTabEnv.classList.toggle("active", isEnv);
+    uploadTabEnv.setAttribute("aria-selected", isEnv ? "true" : "false");
+  }
+  if (uploadTabJetbrains) {
+    uploadTabJetbrains.classList.toggle("active", !isEnv);
+    uploadTabJetbrains.setAttribute("aria-selected", !isEnv ? "true" : "false");
+  }
+  if (uploadPanelEnv) uploadPanelEnv.classList.toggle("hidden", !isEnv);
+  if (uploadPanelJetbrains) uploadPanelJetbrains.classList.toggle("hidden", isEnv);
+  if (pendingUpload) pendingUpload.source = isEnv ? "env" : "jetbrains";
+}
+
+function updateUploadSummary() {
+  const ctx = pendingUpload?.ctx;
+  const count = Number(pendingUpload?.entries?.length || 0);
+  if (uploadConfirmBtn) uploadConfirmBtn.disabled = count === 0;
+  if (!uploadSummary) return;
+  if (!ctx) {
+    uploadSummary.textContent = `${count} keys ready`;
+    return;
+  }
+  uploadSummary.textContent = `${count} keys → /${String(ctx.prefix || "").replace(/\/$/, "")}`;
+}
+
+function openUploadModal(ctx, tabId) {
+  pendingUpload = { ctx, tabId, source: "env", entries: [], fileName: "" };
+  if (envFileInput) envFileInput.value = "";
+  if (envFileLabel) envFileLabel.textContent = "No file chosen";
+  if (jetbrainsPasteInput) jetbrainsPasteInput.value = "";
+  setUploadTab("env");
+  updateUploadSummary();
+  setUploadModalOpen(true);
+}
+
+function closeUploadModal() {
+  pendingUpload = null;
+  setUploadModalOpen(false);
+}
+
+uploadModalClose?.addEventListener("click", closeUploadModal);
+uploadCancelBtn?.addEventListener("click", closeUploadModal);
+uploadTabEnv?.addEventListener("click", () => setUploadTab("env"));
+uploadTabJetbrains?.addEventListener("click", () => setUploadTab("jetbrains"));
+
+chooseEnvFileBtn?.addEventListener("click", () => {
+  if (envFileInput) envFileInput.value = "";
+  envFileInput?.click();
+});
+
+uploadKeyValuesBtn?.addEventListener("click", async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    setStatus("Unable to read current tab.");
+    return;
+  }
+
+  const tabUrl = tab?.url || "";
+  const ctx = parseConsulContext(tabUrl);
+  if (!ctx) {
+    setStatus("Not a valid Consul KV page.");
+    return;
+  }
+
+  const allowed = await hasConsulHostPermission(ctx.host);
+  if (!allowed) {
+    showHostPermissionPrompt(ctx);
+    return;
+  }
+
+  openUploadModal(ctx, tab.id);
+});
+
+envFileInput?.addEventListener("change", async () => {
+  const file = envFileInput?.files?.[0];
+  if (!file) return;
+  if (!pendingUpload?.ctx || !pendingUpload?.tabId) return;
+
+  const text = await file.text();
+  const parsed = parseDotEnv(text);
+  pendingUpload.entries = parsed.entries;
+  pendingUpload.fileName = file.name || "";
+
+  if (envFileLabel) {
+    const skipped = Number(parsed.skipped || 0);
+    const skippedText = skipped ? ` · ${skipped} skipped` : "";
+    envFileLabel.textContent = `${file.name || "selected"} · ${parsed.entries.length} keys${skippedText}`;
+  }
+
+  updateUploadSummary();
+});
+
+jetbrainsPasteInput?.addEventListener("input", () => {
+  if (!pendingUpload?.ctx || !pendingUpload?.tabId) return;
+  const parsed = parseJetBrainsPairs(jetbrainsPasteInput.value || "");
+  pendingUpload.entries = parsed.entries;
+  updateUploadSummary();
+});
+
+uploadConfirmBtn?.addEventListener("click", async () => {
+  const upload = pendingUpload;
+  const ctx = upload?.ctx;
+  const tabId = upload?.tabId;
+  const entries = upload?.entries;
+  if (!ctx || !tabId || !Array.isArray(entries) || entries.length === 0) return;
+
+  const target = `/${String(ctx.prefix || "").replace(/\/$/, "")}`;
+  const ok = confirm(`Upload ${entries.length} keys to ${ctx.host}${target}? This will create/update values.`);
+  if (!ok) return;
+
+  showLoader(true);
+  if (uploadConfirmBtn) uploadConfirmBtn.disabled = true;
+
+  await ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix);
+  chrome.runtime.sendMessage(
+    { type: CONSTANTS.MESSAGE_TYPES.APPLY_ENV, scheme: ctx.scheme, host: ctx.host, dc: ctx.dc, prefix: ctx.prefix, entries },
+    (res) => {
+      showLoader(false);
+      if (uploadConfirmBtn) uploadConfirmBtn.disabled = false;
+
+      if (chrome.runtime.lastError || !res) {
+        setStatus("Failed to upload key values.");
+        return;
+      }
+      if (!res.ok) {
+        setStatus(String(res.error || "Failed to upload key values."));
+        return;
+      }
+
+      closeUploadModal();
+      setStatus(`Uploaded ${Number(res.applied || 0)} keys to ${target}`);
+      loadSecretsForContext(ctx, tabId);
+    }
+  );
 });
 
 saveBtn.addEventListener("click", () => {
@@ -850,31 +1267,37 @@ saveBtn.addEventListener("click", () => {
     setStatus("Load secrets from a Consul page first.");
     return;
   }
-
-  getCollections((collections) => {
-    const title = currentPrefix;
-    const matches = (collections || []).filter((c) => (c.title || "") === title);
-    const now = Date.now();
-
-    let next = [];
-
-    if (matches.length === 0) {
-      const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(now);
-      const collection = { id, title, createdAt: now, updatedAt: now, keys: currentSecrets };
-      next = [...collections, collection];
-    } else {
-      const keep = matches.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0];
-      next = (collections || [])
-        .filter((c) => (c.id || "") === (keep.id || "") || (c.title || "") !== title)
-        .map((c) => {
-          if ((c.id || "") !== (keep.id || "")) return c;
-          return { ...c, title, updatedAt: now, keys: currentSecrets };
-        });
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs?.[0];
+    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
+    const host = currentHost || ctx?.host || "";
+    if (!host) {
+      setStatus("Open a Consul KV page to save a host-scoped collection.");
+      return;
     }
 
-    STORAGE.setCollections(next, () => {
-      setStatus("Collection saved.");
-      updateSavedAvailability();
+    getCollections((collections) => {
+      const title = currentPrefix;
+      const matches = (collections || []).filter((c) => (c.title || "") === title && (c.host || "") === host);
+      const now = Date.now();
+
+      let next = [];
+
+      if (matches.length === 0) {
+        const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(now);
+        const collection = { id, host, title, createdAt: now, updatedAt: now, keys: currentSecrets };
+        next = [...collections, collection];
+      } else {
+        const keep = matches.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0];
+        next = (collections || [])
+          .filter((c) => (c.id || "") !== (keep.id || ""))
+          .concat([{ ...keep, host, title, updatedAt: now, keys: currentSecrets }]);
+      }
+
+      STORAGE.setCollections(next, () => {
+        setStatus("Collection saved.");
+        updateSavedAvailability();
+      });
     });
   });
 });
@@ -884,19 +1307,33 @@ loadSavedBtn.addEventListener("click", () => {
   resetUI();
   showLoader(true);
 
-  getCollections((collections) => {
-    showLoader(false);
-    if (!collections || collections.length === 0) {
-      setStatus("No saved collections found.");
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs?.[0];
+    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
+    const host = ctx?.host || currentHost || "";
+    if (!host) {
+      showLoader(false);
+      setStatus("Open a Consul KV page to view host-scoped saved collections.");
       loadSavedBtn.disabled = true;
       return;
     }
 
-    renderCollectionsList(collections);
-    setPostLoadVisible(false);
-    setCompareVisible(true, collections.length >= 2);
-    loadSavedBtn.disabled = false;
-    setStatus(`Loaded ${collections.length} collections`);
+    getCollections((collections) => {
+      showLoader(false);
+      const scoped = (collections || []).filter((c) => (c.host || "") === host);
+      if (scoped.length === 0) {
+        setStatus("No saved collections found for this host.");
+        loadSavedBtn.disabled = true;
+        return;
+      }
+
+      currentHost = host;
+      renderCollectionsList(scoped);
+      setPostLoadVisible(false);
+      setCompareVisible(true, scoped.length >= 2);
+      loadSavedBtn.disabled = false;
+      setStatus(`Loaded ${scoped.length} collections`);
+    });
   });
 });
 
@@ -914,7 +1351,12 @@ downloadBtn.addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "secrets.env";
+  const base = String(currentPrefix || "secrets")
+    .replace(/^\/+/, "")
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 60);
+  link.download = `${base || "secrets"}.env`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -945,12 +1387,18 @@ compareBtn.addEventListener("click", () => {
     setCompareVisible(true, true);
 
     if (currentView === "list") {
-      getCollections((collections) => {
-        renderCollectionsList(collections);
-        setPostLoadVisible(false);
-        setCompareVisible(true, (collections || []).length >= 2);
-        showSearch();
-        setStatus(`Loaded ${(collections || []).length} collections`);
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs?.[0];
+        const ctx = tab?.url ? parseConsulContext(tab.url) : null;
+        const host = ctx?.host || currentHost || "";
+        getCollections((collections) => {
+          const scoped = host ? (collections || []).filter((c) => (c.host || "") === host) : [];
+          renderCollectionsList(scoped);
+          setPostLoadVisible(false);
+          setCompareVisible(true, scoped.length >= 2);
+          showSearch();
+          setStatus(`Loaded ${scoped.length} collections`);
+        });
       });
       return;
     }
@@ -964,20 +1412,33 @@ compareBtn.addEventListener("click", () => {
     return;
   }
 
-  getCollections((collections) => {
-    if (!collections || collections.length < 2) {
-      setStatus("Need at least 2 saved collections to compare.");
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs?.[0];
+    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
+    const host = ctx?.host || currentHost || "";
+    if (!host) {
+      setStatus("Open a Consul KV page to compare host-scoped collections.");
       setCompareVisible(true, false);
       return;
     }
 
-    comparePickerOpen = true;
-    compareSelectedIds = [];
-    setPostLoadVisible(false);
-    setCompareVisible(true, true);
-    renderComparePicker(collections);
-    showSearch();
-    setStatus("Select two collections (A then B) to compare.");
+    getCollections((collections) => {
+      const scoped = (collections || []).filter((c) => (c.host || "") === host);
+      if (scoped.length < 2) {
+        setStatus("Need at least 2 saved collections to compare.");
+        setCompareVisible(true, false);
+        return;
+      }
+
+      currentHost = host;
+      comparePickerOpen = true;
+      compareSelectedIds = [];
+      setPostLoadVisible(false);
+      setCompareVisible(true, true);
+      renderComparePicker(scoped);
+      showSearch();
+      setStatus("Select two collections (A then B) to compare.");
+    });
   });
 });
 

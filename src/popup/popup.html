@@ -17,7 +17,11 @@
           <div class="brand-subtitle">Consul Companion</div>
         </div>
       </div>
-      <button id="dark-toggle" class="icon-button" aria-label="Toggle dark mode">🌙</button>
+      <div class="header-actions">
+        <button id="downloadBtn" class="icon-button hidden" aria-label="Download .env" title="Download .env">⤓</button>
+        <button id="saveBtn" class="icon-button hidden" aria-label="Save snapshot" title="Save snapshot">💾</button>
+        <button id="dark-toggle" class="icon-button" aria-label="Toggle dark mode">🌙</button>
+      </div>
     </div>
 
     <div id="status"></div>
@@ -26,10 +30,63 @@
       <button id="loadBtn" class="btn primary span-2">Load Secrets</button>
       <button id="grantPermissionBtn" class="btn primary span-2 hidden">Grant Santa Access</button>
       <button id="loadSavedBtn" class="btn" disabled>Load Saved</button>
-      <button id="saveBtn" class="btn" disabled>Save</button>
+      <button id="uploadKeyValuesBtn" class="btn">Upload Key Values</button>
       <button id="compareBtn" class="btn hidden" disabled>Compare</button>
-      <button id="downloadBtn" class="btn hidden" disabled>Download .env</button>
       <button id="intellijBtn" class="btn hidden" disabled>Copy JetBrains</button>
+    </div>
+    <input id="envFileInput" type="file" accept=".env,text/plain" class="hidden" />
+
+    <div id="uploadModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="uploadModalTitle">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title" id="uploadModalTitle">Upload Key Values</div>
+          <button id="uploadModalClose" class="icon-button" aria-label="Close">✕</button>
+        </div>
+
+        <div class="segmented" role="tablist" aria-label="Upload source">
+          <button id="uploadTabEnv" class="segmented-btn active" role="tab" aria-selected="true">.env</button>
+          <button id="uploadTabJetbrains" class="segmented-btn" role="tab" aria-selected="false">JetBrains</button>
+        </div>
+
+        <div id="uploadPanelEnv" class="modal-panel">
+          <button id="chooseEnvFileBtn" class="btn">Choose .env file</button>
+          <div class="modal-help" id="envFileLabel">No file chosen</div>
+        </div>
+
+        <div id="uploadPanelJetbrains" class="modal-panel hidden">
+          <textarea id="jetbrainsPasteInput" class="textarea" placeholder="Paste JetBrains env var format: A=B;C=D;"></textarea>
+          <div class="modal-help">Tip: use “Copy JetBrains” from a saved collection, then paste here.</div>
+        </div>
+
+        <div class="modal-footer">
+          <div class="modal-summary" id="uploadSummary">0 keys ready</div>
+          <div class="modal-actions">
+            <button id="uploadCancelBtn" class="btn">Cancel</button>
+            <button id="uploadConfirmBtn" class="btn primary" disabled>Upload</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="jsonModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="jsonModalTitle">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title" id="jsonModalTitle">JSON</div>
+          <button id="jsonModalClose" class="icon-button" aria-label="Close">✕</button>
+        </div>
+
+        <pre id="jsonModalBody" class="json-modal-pre"></pre>
+
+        <div class="modal-footer">
+          <div class="modal-summary" id="jsonModalMeta"></div>
+          <div class="modal-actions">
+            <button id="jsonModalCopy" class="btn">Copy</button>
+            <button id="jsonModalDone" class="btn primary">Done</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="search-container">

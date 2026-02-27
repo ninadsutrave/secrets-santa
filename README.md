@@ -34,6 +34,7 @@ SecretsSanta is a lightweight Consul KV companion for developers who spend time 
 - Truncates long values while keeping copy available
 - Downloads all loaded keys as a `.env` file
 - Copies all loaded keys in IntelliJ / JetBrains env-var format
+- Uploads key values to the currently opened Consul KV prefix (create/update)
 - Saves a snapshot of the currently loaded prefix to local storage
 - Updates an existing saved collection when saving the same prefix again
 - Lists saved collections with key counts
@@ -71,6 +72,15 @@ SecretsSanta is a lightweight Consul KV companion for developers who spend time 
 3. When prompted, grant host permission for your Consul domain.
 4. Make sure the Consul UI is making requests that include `X-Consul-Token`.
 5. Copy/export/save/compare as needed.
+
+### Upload Key Values
+
+Use **Upload Key Values** to create/update keys under the KV prefix of the currently opened Consul UI page.
+
+- **.env**: choose a `.env` file containing `KEY=VALUE` lines
+- **JetBrains**: paste JetBrains env-var format like `A=B;C=D;`
+
+After selecting/pasting, click **Upload** and confirm.
 
 ## 🔐 Security Notes
 
