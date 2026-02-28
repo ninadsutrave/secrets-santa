@@ -1,0 +1,68 @@
+# ----------------------------
+# Node dependencies
+# ----------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ----------------------------
+# Build output
+# ----------------------------
+dist/
+build/
+out/
+.bundle/
+.cache/
+coverage/
+
+# Webpack cache
+.cache-loader/
+webpack-stats.json
+
+# ----------------------------
+# Environment files
+# ----------------------------
+.env
+.env.*
+!.env.example
+
+# ----------------------------
+# OS files
+# ----------------------------
+.DS_Store
+Thumbs.db
+
+# ----------------------------
+# IDE files
+# ----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ----------------------------
+# Logs
+# ----------------------------
+logs/
+*.log
+
+# ----------------------------
+# Temporary files
+# ----------------------------
+tmp/
+temp/
+
+# ----------------------------
+# Mac/Linux misc
+# ----------------------------
+*.pid
+*.seed
+*.pid.lock
+
+# ----------------------------
+# Chrome extension packaging
+# ----------------------------
+*.crx
+*.pem

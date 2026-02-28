@@ -93,6 +93,18 @@ async function fetchKeyValue({ scheme, host, dc, fullKey, token }) {
     }
 
     const defaultAclPolicy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+    if (res.status === 401 || res.status === 403) {
+      try {
+        const latest = await getActiveToken(host);
+        if (latest && latest !== token) {
+          const retryWithLatest = await doFetch(latest);
+          if (retryWithLatest.ok) {
+            res = retryWithLatest;
+            errorText = "";
+          }
+        }
+      } catch {}
+    }
     if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy === "deny") {
       if (isAclNotFound(errorText) || isPermissionDenied(errorText) || !errorText) {
         const retry = await doFetch("");
@@ -129,6 +141,15 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
 
   let res = await doFetch(token);
   let errorText = "";
+  let firstStatus = res.status;
+  let firstErrorText = "";
+  try {
+    if (!res.ok) {
+      firstErrorText = String(await res.text()).slice(0, 360);
+    }
+  } catch {
+    firstErrorText = "";
+  }
 
   if (!res.ok) {
     try {
@@ -138,7 +159,20 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
     }
 
     const defaultAclPolicy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
-    if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy === "deny") {
+    if (res.status === 401 || res.status === 403) {
+      try {
+        const latest = await getActiveToken(host);
+        if (latest && latest !== token) {
+          const retryWithLatest = await doFetch(latest);
+          if (retryWithLatest.ok) {
+            res = retryWithLatest;
+            errorText = "";
+          }
+        }
+      } catch {}
+    }
+    // Avoid retrying without a token when policy is "deny" (common in org-hosted Consul) to prevent confusing 404s.
+    if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy !== "deny") {
       if (isAclNotFound(errorText) || isPermissionDenied(errorText) || !errorText) {
         const retry = await doFetch("");
         if (retry.ok) {
@@ -150,9 +184,20 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
     }
 
     if (!res.ok) {
-      if (!token && defaultAclPolicy === "deny" && !errorText) {
+      const defaultAclPolicyFinal = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+      if (res.status === 404) {
+        const notFoundMsg =
+          defaultAclPolicyFinal === "deny"
+            ? "Prefix not found or not visible with current ACLs (404). Ensure the token has key:read on this prefix and datacenter."
+            : "Prefix not found (404). Check datacenter/prefix or permissions.";
+        return { ok: false, status: 404, errorText: notFoundMsg };
+      }
+      if (!token && defaultAclPolicyFinal === "deny" && !errorText && !firstErrorText) {
         errorText =
           "No Consul token captured yet. Open the Consul UI (logged in) and try again so Santa can reuse your token.";
+      }
+      if (!errorText && firstErrorText) {
+        errorText = firstErrorText;
       }
       if ((res.status === 401 || res.status === 403) && isAclNotFound(errorText)) {
         clearToken(host);
@@ -205,6 +250,18 @@ async function putKeyValue({ scheme, host, dc, fullKey, token, value }) {
     }
 
     const defaultAclPolicy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+    if (res.status === 401 || res.status === 403) {
+      try {
+        const latest = await getActiveToken(host);
+        if (latest && latest !== token) {
+          const retryWithLatest = await doFetch(latest);
+          if (retryWithLatest.ok) {
+            res = retryWithLatest;
+            errorText = "";
+          }
+        }
+      } catch {}
+    }
     if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy === "deny") {
       if (isAclNotFound(errorText) || isPermissionDenied(errorText) || !errorText) {
         const retry = await doFetch("");

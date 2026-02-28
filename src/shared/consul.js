@@ -21,7 +21,8 @@ function buildKvListKeysUrl({ scheme = "https", host, dc, prefix }) {
   const p = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
   const s = String(scheme || "https").replace(":", "");
   const base = p ? `/v1/kv/${encodeURI(p)}` : "/v1/kv/";
-  return `${s}://${host}${base}?dc=${encodeURIComponent(dc)}&keys&separator=/`;
+  const sep = encodeURIComponent("/");
+  return `${s}://${host}${base}?keys&dc=${encodeURIComponent(dc)}&separator=${sep}`;
 }
 
 function buildKvPutUrl({ scheme = "https", host, dc, fullKey }) {

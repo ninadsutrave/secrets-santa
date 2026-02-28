@@ -27,6 +27,6 @@ globalThis.SECRETS_SANTA.CONSTANTS = {
   },
 
   UI: {
-    SENSITIVE_KEY_REGEX: /(key|secret|token|password|pwd)/i
+    SENSITIVE_KEY_REGEX: /(key|secret|token|password|pwd|credential|otp|cvv|ssn|pin|jwt|cookie|signature|bearer)/i
   }
 };

@@ -3,7 +3,7 @@
    - Renders keys/values with masking/copy/pretty JSON
    - Saves and compares snapshots */
 
-const { CONSTANTS, STORAGE } = globalThis.SECRETS_SANTA;
+const { CONSTANTS, STORAGE, TOKEN, ENV, MODALS, TABLE, COLLECTIONS, COMPARE, UPLOAD } = globalThis.SECRETS_SANTA;
 
 const loadBtn = document.getElementById("loadBtn");
 const grantPermissionBtn = document.getElementById("grantPermissionBtn");
@@ -35,12 +35,6 @@ const searchContainer = document.getElementById("search-container");
 const searchInput = document.getElementById("search-input");
 const darkToggle = document.getElementById("dark-toggle");
 const jsonModal = document.getElementById("jsonModal");
-const jsonModalClose = document.getElementById("jsonModalClose");
-const jsonModalDone = document.getElementById("jsonModalDone");
-const jsonModalCopy = document.getElementById("jsonModalCopy");
-const jsonModalTitle = document.getElementById("jsonModalTitle");
-const jsonModalBody = document.getElementById("jsonModalBody");
-const jsonModalMeta = document.getElementById("jsonModalMeta");
 
 let currentSecrets = {};
 let currentView = "table";
@@ -55,23 +49,33 @@ let diffRightTitle = "";
 let pendingConsulContext = null;
 let pendingUpload = null;
 let currentDataSource = "none";
+let currentScheme = "https";
+let currentDc = "";
 
 const SENSITIVE_REGEX = CONSTANTS.UI.SENSITIVE_KEY_REGEX;
 
+// Sets the user-visible status banner text at the top of the popup.
+// Pass a short, actionable message. Empty/falsey clears the banner.
 function setStatus(text) {
   statusDiv.textContent = text || "";
 }
 
+// Shows or hides the global loader spinner overlay.
+// Use for short-lived background actions; keep visible time minimal.
 function showLoader(visible) {
   if (!loader) return;
   loader.classList.toggle("hidden", !visible);
 }
 
+// Ensures the search input is visible to filter the current view (table or list).
+// The actual filtering behavior is bound to the input handler below.
 function showSearch() {
   if (!searchContainer) return;
   searchContainer.classList.add("visible");
 }
 
+// Toggles visibility and enabled state of post-load controls (download, save, JetBrains).
+// Should be enabled only when a concrete set of keys is visible (table view).
 function setPostLoadVisible(visible) {
   const controls = [downloadBtn, intellijBtn];
   controls.forEach((btn) => {
@@ -85,6 +89,8 @@ function setPostLoadVisible(visible) {
   }
 }
 
+// Controls the Compare button’s visibility and enabled state.
+// The button is available when there are at least 2 saved collections for the host.
 function setCompareVisible(visible, enabled = visible) {
   if (!compareBtn) return;
   compareBtn.classList.toggle("hidden", !visible);
@@ -92,6 +98,8 @@ function setCompareVisible(visible, enabled = visible) {
   compareBtn.textContent = comparePickerOpen ? "Cancel Compare" : "Compare";
 }
 
+// Resets the popup UI to its clean state before a new load or when switching modes.
+// Clears tables/lists, hides modals, resets state flags and UI controls.
 function resetUI() {
   tbody.innerHTML = "";
   if (savedList) savedList.innerHTML = "";
@@ -120,6 +128,101 @@ function resetUI() {
   if (jsonModal) jsonModal.classList.add("hidden");
 }
 
+TABLE.setup({
+  table,
+  tbody,
+  savedList,
+  intellijBtn,
+  setStatus,
+  showLoader,
+  getContext: () => ({ prefix: currentPrefix, host: currentHost, scheme: currentScheme, dc: currentDc }),
+  onValueSaved: (k, v) => {
+    currentSecrets[k] = v;
+  },
+  SENSITIVE_REGEX: SENSITIVE_REGEX,
+  setCurrentView: (view) => {
+    currentView = view;
+  },
+  setIsDiffView: (val) => {
+    isDiffView = val;
+  },
+  getDiffLeftTitle: () => diffLeftTitle,
+  getDiffRightTitle: () => diffRightTitle
+});
+
+COLLECTIONS.setup({
+  savedList,
+  table,
+  STORAGE,
+  setStatus,
+  setPostLoadVisible,
+  setCompareVisible,
+  showSearch,
+  TABLE,
+  onLoadCollection: (collection) => {
+    currentSecrets = collection.keys;
+    currentPrefix = collection.title || "";
+    currentHost = collection.host || currentHost || "";
+    currentLoadedCollectionId = collection.id || null;
+    isDiffView = false;
+    currentDataSource = "saved";
+    TABLE.renderTable(currentSecrets);
+    setPostLoadVisible(true);
+    setCompareVisible(true, true);
+    showSearch();
+    setStatus(`Loaded ${Object.keys(currentSecrets).length} keys`);
+  }
+});
+
+COMPARE.setup({
+  savedList,
+  setStatus,
+  setPostLoadVisible,
+  setCompareVisible,
+  showSearch,
+  setCurrentView: (view) => {
+    currentView = view;
+  },
+  setIsDiffView: (val) => {
+    isDiffView = val;
+  },
+  setDiffTitles: (a, b) => {
+    diffLeftTitle = a;
+    diffRightTitle = b;
+  },
+  getDiffLeftTitle: () => diffLeftTitle,
+  getDiffRightTitle: () => diffRightTitle,
+  TABLE
+});
+
+UPLOAD.setup({
+  elements: {
+    uploadModal,
+    uploadModalClose,
+    uploadCancelBtn,
+    uploadConfirmBtn,
+    uploadSummary,
+    uploadTabEnv,
+    uploadTabJetbrains,
+    uploadPanelEnv,
+    uploadPanelJetbrains,
+    chooseEnvFileBtn,
+    envFileInput,
+    envFileLabel,
+    jetbrainsPasteInput
+  },
+  setStatus,
+  showLoader,
+  ENV,
+  TOKEN,
+  CONSTANTS,
+  onApplied: (ctx, tabId) => {
+    loadSecretsForContext(ctx, tabId);
+  }
+});
+
+// Converts API responses into a flat key→value map.
+// Supports either array of {key,value} or a plain object already keyed by KV.
 function normalizeKeys(keys) {
   if (!keys) return null;
   if (Array.isArray(keys)) {
@@ -134,6 +237,8 @@ function normalizeKeys(keys) {
   return null;
 }
 
+// Parses a Consul UI URL and extracts: scheme, host, datacenter, and KV prefix (with trailing slash).
+// Returns null if the URL does not resemble a Consul KV page.
 function parseConsulContext(url) {
   try {
     const u = new URL(url);
@@ -152,15 +257,20 @@ function parseConsulContext(url) {
   }
 }
 
+// Builds the optional host permission origins for a given Consul host.
+// Includes both https and http schemes to satisfy sites that downgrade.
 function getConsulOrigins(host) {
   return [`https://${host}/*`, `http://${host}/*`];
 }
 
+// Checks whether the extension already has the required host permissions for the Consul host.
 function hasConsulHostPermission(host) {
   const origins = getConsulOrigins(host);
   return new Promise((resolve) => chrome.permissions.contains({ origins }, (has) => resolve(Boolean(has))));
 }
 
+// Prompts the user to grant optional host permissions for the Consul host.
+// Resolves to true when granted, false otherwise.
 function requestConsulHostPermission(host) {
   const origins = getConsulOrigins(host);
   return new Promise((resolve) =>
@@ -168,6 +278,8 @@ function requestConsulHostPermission(host) {
   );
 }
 
+// Shows a CTA prompting the user to grant host access.
+// Stores the context so the grant action can resume loading immediately after.
 function showHostPermissionPrompt(ctx) {
   pendingConsulContext = ctx;
   if (grantPermissionBtn) grantPermissionBtn.classList.remove("hidden");
@@ -176,11 +288,13 @@ function showHostPermissionPrompt(ctx) {
   );
 }
 
+// Hides any visible host permission CTA.
 function hideHostPermissionPrompt() {
   pendingConsulContext = null;
   if (grantPermissionBtn) grantPermissionBtn.classList.add("hidden");
 }
 
+// Attempts a heuristic token capture from local/session storage in the page context.
 async function tryCaptureTokenFromTab(tabId) {
   try {
     const results = await chrome.scripting.executeScript({
@@ -283,180 +397,15 @@ async function tryCaptureTokenFromTab(tabId) {
   }
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+/* token helpers moved to token.js */
 
-function fetchTokenFromBackground(host) {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: CONSTANTS.MESSAGE_TYPES.FETCH_KEYS, host }, (res) => {
-      resolve(String(res?.token || ""));
-    });
-  });
-}
-
-async function validateTokenOnTab(tabId, dc, token) {
-  try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "MAIN",
-      args: [dc, token],
-      func: async (dcArg, tokenArg) => {
-        try {
-          const dc = String(dcArg || "");
-          const token = String(tokenArg || "");
-          if (!token) return false;
-          const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
-          const res = await fetch(`/v1/acl/token/self${suffix}`, {
-            method: "GET",
-            credentials: "include",
-            headers: { "X-Consul-Token": token }
-          });
-          return res.ok;
-        } catch {
-          return false;
-        }
-      }
-    });
-    return Boolean(results?.[0]?.result);
-  } catch {
-    return false;
-  }
-}
-
-async function captureAndStoreTokenFromConsulStorage(tabId, host, dc) {
-  try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "MAIN",
-      func: () => {
-        const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        const uuidInText = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-        const plausibleToken = (value) => {
-          const v = String(value || "").trim();
-          if (!v) return "";
-          if (uuidLike.test(v)) return v;
-          const match = v.match(uuidInText);
-          if (match?.[0] && uuidLike.test(match[0])) return match[0];
-          if (v.length < 20 || v.length > 256) return "";
-          if (/\s/.test(v)) return "";
-          return v;
-        };
-        const keyOk = (k) => {
-          const key = String(k || "").toLowerCase();
-          if (!key) return false;
-          const hasVendor = key.includes("consul") || key.includes("hashicorp") || key.includes("hcp");
-          const hasType = key.includes("token") || key.includes("acl");
-          if (hasVendor && hasType) return true;
-          if (key.includes("consul") && key.includes("secret")) return true;
-          return false;
-        };
-
-        const candidates = [];
-
-        const findUuidDeep = (obj, depth = 0) => {
-          if (!obj || depth > 5) return "";
-          if (typeof obj === "string") return plausibleToken(obj);
-          if (typeof obj !== "object") return "";
-          if (Array.isArray(obj)) {
-            for (const item of obj) {
-              const found = findUuidDeep(item, depth + 1);
-              if (found) return found;
-            }
-            return "";
-          }
-          for (const key in obj) {
-            const found = findUuidDeep(obj[key], depth + 1);
-            if (found) return found;
-          }
-          return "";
-        };
-
-        const tryAdd = (k, v) => {
-          if (!keyOk(k)) return;
-          const raw = String(v || "").trim();
-          if (!raw) return;
-          let token = plausibleToken(raw);
-          if (!token) {
-            try {
-              token = findUuidDeep(JSON.parse(raw));
-            } catch {
-              token = "";
-            }
-          }
-          if (!token) return;
-          let score = 0;
-          const lowerKey = String(k || "").toLowerCase();
-          if (lowerKey.includes("token")) score += 6;
-          if (lowerKey.includes("acl")) score += 3;
-          candidates.push({ value: token, score });
-        };
-
-        for (let i = 0; i < localStorage.length; i += 1) {
-          const k = localStorage.key(i);
-          tryAdd(k, localStorage.getItem(k));
-        }
-        for (let i = 0; i < sessionStorage.length; i += 1) {
-          const k = sessionStorage.key(i);
-          tryAdd(k, sessionStorage.getItem(k));
-        }
-
-        candidates.sort((a, b) => b.score - a.score);
-        return candidates[0]?.value || "";
-      }
-    });
-
-    const token = String(results?.[0]?.result || "");
-    if (!token) return "";
-    const valid = await validateTokenOnTab(tabId, dc, token);
-    if (!valid) return "";
-    STORAGE.setTokenForHost(host, token);
-    await new Promise((resolve) =>
-      chrome.runtime.sendMessage({ type: CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host }, () => resolve())
-    );
-    return token;
-  } catch {
-    return "";
-  }
-}
-
-async function primeTokenCaptureOnTab(tabId, dc, prefix) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "MAIN",
-      args: [dc, prefix],
-      func: (dcArg, prefixArg) => {
-        try {
-          const dc = String(dcArg || "");
-          const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
-          const p = String(prefixArg || "");
-          const kvPath = p ? `/v1/kv/${encodeURI(p)}` : "/v1/kv/";
-          const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
-          fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => {});
-          fetch(kvUrl, { credentials: "include" }).catch(() => {});
-        } catch {}
-      }
-    });
-  } catch {}
-}
-
-async function ensureTokenAvailable(tabId, host, dc, prefix) {
-  await primeTokenCaptureOnTab(tabId, dc, prefix);
-  for (let i = 0; i < 8; i += 1) {
-    const token = await fetchTokenFromBackground(host);
-    if (token) return token;
-    await sleep(150);
-  }
-  const token = await captureAndStoreTokenFromConsulStorage(tabId, host, dc);
-  if (token) return token;
-  return "";
-}
+/* token functions moved to token.js */
 
 function getCollections(callback) {
   STORAGE.getCollections(callback);
 }
 
+// Enables or disables the “Load Saved” button depending on host-scoped collections.
 function updateSavedAvailability() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs?.[0];
@@ -466,542 +415,26 @@ function updateSavedAvailability() {
       loadSavedBtn.disabled = true;
       return;
     }
-    getCollections((collections) => {
+    COLLECTIONS.getAll((collections) => {
       const scoped = (collections || []).filter((c) => (c.host || "") === host);
       loadSavedBtn.disabled = scoped.length === 0;
     });
   });
 }
 
-function formatEnvValue(value) {
-  if (value === null || value === undefined) return "";
-  return String(value).replace(/\r?\n/g, "\\n");
-}
+/* env helpers moved to env-utils.js */
 
-function truncate(str, max = 80) {
-  if (!str) return "";
-  if (str.length <= max) return str;
-  return str.slice(0, max) + "...";
-}
+/* json modal moved to modals.js */
 
-function mask(value) {
-  return "•".repeat(Math.min(value.length, 12));
-}
+/* json test moved to env-utils.js */
 
-function parseDotEnv(text) {
-  const lines = String(text || "").split(/\r?\n/);
-  const entries = [];
-  let skipped = 0;
+/* buildValueActions moved to table.js */
 
-  lines.forEach((raw) => {
-    const line = String(raw || "").trim();
-    if (!line) return;
-    if (line.startsWith("#")) return;
+/* table rendering moved to table.js */
 
-    const withoutExport = line.startsWith("export ") ? line.slice(7).trim() : line;
-    const idx = withoutExport.indexOf("=");
-    if (idx <= 0) {
-      skipped += 1;
-      return;
-    }
+/* compare moved to compare.js */
 
-    const key = withoutExport.slice(0, idx).trim();
-    let value = withoutExport.slice(idx + 1);
-
-    const isQuoted =
-      (value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"));
-    if (!isQuoted) {
-      const hashIndex = value.indexOf(" #");
-      if (hashIndex !== -1) value = value.slice(0, hashIndex);
-      const hashIndex2 = value.indexOf("\t#");
-      if (hashIndex2 !== -1) value = value.slice(0, hashIndex2);
-    }
-
-    value = value.trim();
-    if (value.startsWith("\"") && value.endsWith("\"")) {
-      value = value.slice(1, -1);
-      value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t").replace(/\\"/g, "\"");
-    } else if (value.startsWith("'") && value.endsWith("'")) {
-      value = value.slice(1, -1);
-    }
-
-    if (!key) {
-      skipped += 1;
-      return;
-    }
-
-    entries.push({ key, value });
-  });
-
-  return { entries, skipped };
-}
-
-function parseJetBrainsPairs(text) {
-  const raw = String(text || "").trim();
-  if (!raw) return { entries: [], skipped: 0 };
-
-  const parts = raw.split(";");
-  const entries = [];
-  let skipped = 0;
-
-  parts.forEach((p) => {
-    const part = String(p || "").trim();
-    if (!part) return;
-    const idx = part.indexOf("=");
-    if (idx <= 0) {
-      skipped += 1;
-      return;
-    }
-    const key = part.slice(0, idx).trim();
-    const value = part.slice(idx + 1);
-    if (!key) {
-      skipped += 1;
-      return;
-    }
-    entries.push({ key, value });
-  });
-
-  return { entries, skipped };
-}
-
-function setJsonModalOpen(open) {
-  if (!jsonModal) return;
-  jsonModal.classList.toggle("hidden", !open);
-}
-
-function openJsonModal(title, value) {
-  if (jsonModalTitle) jsonModalTitle.textContent = title || "JSON";
-  if (jsonModalBody) jsonModalBody.textContent = String(value || "");
-  if (jsonModalMeta) jsonModalMeta.textContent = title ? `Key: ${title}` : "";
-  setJsonModalOpen(true);
-}
-
-function closeJsonModal() {
-  setJsonModalOpen(false);
-}
-
-jsonModalClose?.addEventListener("click", closeJsonModal);
-jsonModalDone?.addEventListener("click", closeJsonModal);
-jsonModalCopy?.addEventListener("click", () => {
-  if (!jsonModalBody) return;
-  navigator.clipboard.writeText(jsonModalBody.textContent || "");
-  setStatus("Copied JSON");
-});
-
-function isValidJSON(str) {
-  try {
-    if (typeof str !== "string") return false;
-    const trimmed = str.trim();
-    if (!trimmed) return false;
-    if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return false;
-    const parsed = JSON.parse(trimmed);
-    return parsed !== null && typeof parsed === "object";
-  } catch {
-    return false;
-  }
-}
-
-function buildValueActions(key, value, valueContainer, actionsContainer) {
-  const textSpan = document.createElement("span");
-  textSpan.className = "value-text";
-
-  const isSensitive = SENSITIVE_REGEX.test(key);
-  const isJSON = isValidJSON(value);
-  const truncationLimit = 120;
-
-  let formattedJSON = null;
-  if (isJSON) {
-    formattedJSON = JSON.stringify(JSON.parse(String(value).trim()), null, 2);
-  }
-
-  const valueWrap = document.createElement("div");
-  valueWrap.className = "value-wrap";
-
-  const initialText = isSensitive
-    ? mask(String(value))
-    : isJSON
-      ? truncate(formattedJSON, truncationLimit)
-      : truncate(String(value), truncationLimit);
-
-  textSpan.textContent = initialText;
-  if (isSensitive) textSpan.classList.add("masked");
-
-  valueWrap.appendChild(textSpan);
-  valueContainer.appendChild(valueWrap);
-
-  const copy = document.createElement("button");
-  copy.type = "button";
-  copy.textContent = "⧉";
-  copy.className = "icon-btn value-copy";
-  copy.title = "Copy";
-  copy.addEventListener("click", (event) => {
-    event.stopPropagation();
-    navigator.clipboard.writeText(String(value));
-    setStatus(`Copied ${key}`);
-  });
-  actionsContainer.appendChild(copy);
-
-  if (!isSensitive && !isJSON && typeof value === "string" && value.length > truncationLimit) {
-    let expanded = false;
-    textSpan.style.cursor = "pointer";
-    textSpan.addEventListener("click", () => {
-      expanded = !expanded;
-      textSpan.textContent = expanded ? value : truncate(value, truncationLimit);
-    });
-  }
-
-  if (isSensitive) {
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.textContent = "🔒";
-    toggle.className = "icon-btn eye";
-    toggle.title = "Reveal";
-
-    let visible = false;
-    toggle.addEventListener("click", (event) => {
-      event.stopPropagation();
-      visible = !visible;
-      textSpan.classList.remove("json-view");
-      textSpan.textContent = visible ? String(value) : mask(String(value));
-      toggle.textContent = visible ? "🔓" : "🔒";
-      toggle.title = visible ? "Hide" : "Reveal";
-    });
-
-    actionsContainer.appendChild(toggle);
-    return;
-  }
-
-  if (isJSON) {
-    const jsonBtn = document.createElement("button");
-    jsonBtn.type = "button";
-    jsonBtn.textContent = "⟦⟧";
-    jsonBtn.className = "icon-btn json-btn";
-    jsonBtn.title = "Pretty JSON";
-    jsonBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openJsonModal(key, formattedJSON);
-    });
-
-    actionsContainer.appendChild(jsonBtn);
-  }
-}
-
-function renderTable(data, isDiff = false) {
-  tbody.innerHTML = "";
-  currentView = "table";
-  if (savedList) savedList.classList.add("hidden");
-  if (table) table.classList.remove("hidden");
-  isDiffView = isDiff;
-  if (intellijBtn) {
-    intellijBtn.classList.toggle("hidden", false);
-    intellijBtn.disabled = isDiff;
-  }
-
-  if (table) {
-    const headers = table.querySelectorAll("th");
-    if (headers.length >= 3) {
-      headers[0].textContent = "Key";
-      headers[1].textContent = isDiff
-        ? `Values\nA: ${diffLeftTitle || "—"}\nB: ${diffRightTitle || "—"}`
-        : "Value";
-      headers[2].textContent = isDiff ? "Type" : "Actions";
-    }
-  }
-
-  const entries = Object.entries(data);
-  const batchSize = 200;
-  let index = 0;
-
-  function renderBatch() {
-    const fragment = document.createDocumentFragment();
-    const slice = entries.slice(index, index + batchSize);
-
-    slice.forEach(([key, raw]) => {
-      const diffType = isDiff ? raw.type : null;
-
-      const row = document.createElement("tr");
-      if (diffType) row.classList.add(`diff-${diffType}`);
-
-      const keyCell = document.createElement("td");
-      keyCell.textContent = key;
-
-      const valueCell = document.createElement("td");
-      const actionsCell = document.createElement("td");
-
-      if (isDiff) {
-        const wrap = document.createElement("div");
-        wrap.className = "diff-values";
-
-        const appendLine = (label, v) => {
-          const line = document.createElement("div");
-          line.className = "diff-line";
-
-          const labelEl = document.createElement("div");
-          labelEl.className = "diff-label";
-          labelEl.textContent = label;
-
-          const lineValue = document.createElement("div");
-          lineValue.className = "diff-value";
-          const lineActions = document.createElement("div");
-          lineActions.className = "diff-actions";
-
-          if (v === undefined) {
-            const missingWrap = document.createElement("div");
-            missingWrap.className = "value-wrap";
-            const missingText = document.createElement("span");
-            missingText.className = "value-text";
-            missingText.textContent = "—";
-            missingWrap.appendChild(missingText);
-            lineValue.appendChild(missingWrap);
-          } else {
-            buildValueActions(key, String(v), lineValue, lineActions);
-          }
-
-          line.appendChild(labelEl);
-          line.appendChild(lineValue);
-          line.appendChild(lineActions);
-          wrap.appendChild(line);
-        };
-
-        appendLine("A", raw.aValue);
-        appendLine("B", raw.bValue);
-        valueCell.appendChild(wrap);
-
-        const tag = document.createElement("span");
-        tag.className = `diff-tag diff-tag-${diffType || "changed"}`;
-        tag.textContent = diffType === "added" ? "ADD" : diffType === "removed" ? "DEL" : "CHG";
-        actionsCell.appendChild(tag);
-      } else {
-        buildValueActions(key, raw, valueCell, actionsCell);
-      }
-
-      row.appendChild(keyCell);
-      row.appendChild(valueCell);
-      row.appendChild(actionsCell);
-      fragment.appendChild(row);
-    });
-
-    tbody.appendChild(fragment);
-    index += batchSize;
-    if (index < entries.length) requestAnimationFrame(renderBatch);
-  }
-
-  renderBatch();
-}
-
-function buildDiff(aKeys, bKeys) {
-  const a = aKeys || {};
-  const b = bKeys || {};
-  const diff = {};
-
-  for (const key in b) {
-    if (!(key in a)) {
-      diff[key] = { aValue: undefined, bValue: b[key], type: "added" };
-    } else if (a[key] !== b[key]) {
-      diff[key] = { aValue: a[key], bValue: b[key], type: "changed" };
-    }
-  }
-
-  for (const key in a) {
-    if (!(key in b)) {
-      diff[key] = { aValue: a[key], bValue: undefined, type: "removed" };
-    }
-  }
-
-  return diff;
-}
-
-function runCompareForIds(collections, ids) {
-  const left = (collections || []).find((c) => c.id === ids[0]);
-  const right = (collections || []).find((c) => c.id === ids[1]);
-  if (!left || !right) return;
-
-  diffLeftTitle = left.title || "A";
-  diffRightTitle = right.title || "B";
-
-  const diff = buildDiff(left.keys, right.keys);
-  if (Object.keys(diff).length === 0) {
-    setStatus(`No differences found between A (${diffLeftTitle}) and B (${diffRightTitle}).`);
-    return;
-  }
-
-  comparePickerOpen = false;
-  compareSelectedIds = [];
-  setCompareVisible(true, true);
-  setPostLoadVisible(false);
-
-  isDiffView = true;
-  renderTable(diff, true);
-
-  const counts = { added: 0, changed: 0, removed: 0 };
-  Object.values(diff).forEach((item) => {
-    if (!item || !item.type) return;
-    if (counts[item.type] !== undefined) counts[item.type] += 1;
-  });
-
-  setStatus(
-    `Comparing A (${diffLeftTitle}) → B (${diffRightTitle}) · ${Object.keys(diff).length} differences (added ${counts.added}, changed ${counts.changed}, removed ${counts.removed})`
-  );
-}
-
-function renderComparePicker(collections) {
-  if (!savedList) return;
-  savedList.innerHTML = "";
-  currentView = "list";
-  if (table) table.classList.add("hidden");
-  savedList.classList.remove("hidden");
-
-  const fragment = document.createDocumentFragment();
-
-  collections
-    .slice()
-    .sort((a, b) => ((b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)))
-    .forEach((collection) => {
-      const item = document.createElement("li");
-      item.className = "saved-item";
-      item.dataset.key = (collection.title || "").toLowerCase();
-
-      const textWrap = document.createElement("div");
-
-      const titleSpan = document.createElement("div");
-      titleSpan.className = "saved-title";
-      titleSpan.textContent = collection.title || "Collection";
-
-      const count = Object.keys(collection.keys || {}).length;
-      const metaSpan = document.createElement("div");
-      metaSpan.className = "saved-meta";
-      metaSpan.textContent = `${count} keys`;
-
-      textWrap.appendChild(titleSpan);
-      textWrap.appendChild(metaSpan);
-
-      const actions = document.createElement("div");
-      actions.className = "saved-actions";
-
-      const checkbox = document.createElement("span");
-      checkbox.className = "saved-delete";
-      const idx = compareSelectedIds.indexOf(collection.id);
-      checkbox.textContent = idx === 0 ? "①" : idx === 1 ? "②" : "☐";
-
-      actions.appendChild(checkbox);
-
-      item.appendChild(textWrap);
-      item.appendChild(actions);
-
-      item.addEventListener("click", () => {
-        const id = collection.id;
-        if (!id) return;
-
-        let next = compareSelectedIds.slice();
-        const existingIndex = next.indexOf(id);
-        if (existingIndex !== -1) {
-          next.splice(existingIndex, 1);
-        } else {
-          if (next.length >= 2) next = next.slice(1);
-          next.push(id);
-        }
-
-        compareSelectedIds = next;
-
-        if (compareSelectedIds.length === 2) {
-          runCompareForIds(collections, compareSelectedIds);
-          return;
-        }
-
-        setStatus(`Selected ${compareSelectedIds.length}/2 collections (A then B)`);
-        renderComparePicker(collections);
-      });
-
-      fragment.appendChild(item);
-    });
-
-  savedList.appendChild(fragment);
-}
-
-function renderCollectionsList(collections) {
-  if (!savedList) return;
-  savedList.innerHTML = "";
-  currentView = "list";
-  if (table) table.classList.add("hidden");
-  savedList.classList.remove("hidden");
-
-  const fragment = document.createDocumentFragment();
-
-  collections.forEach((collection) => {
-    const item = document.createElement("li");
-    item.className = "saved-item";
-    item.dataset.key = (collection.title || "").toLowerCase();
-
-    const textWrap = document.createElement("div");
-
-    const titleSpan = document.createElement("div");
-    titleSpan.className = "saved-title";
-    titleSpan.textContent = collection.title || "Collection";
-
-    const count = Object.keys(collection.keys || {}).length;
-    const metaSpan = document.createElement("div");
-    metaSpan.className = "saved-meta";
-    metaSpan.textContent = `${count} keys`;
-
-    textWrap.appendChild(titleSpan);
-    textWrap.appendChild(metaSpan);
-
-    const actions = document.createElement("div");
-    actions.className = "saved-actions";
-
-    const del = document.createElement("span");
-    del.className = "saved-delete";
-    del.textContent = "🗑";
-    del.addEventListener("click", (event) => {
-      event.stopPropagation();
-      deleteCollection(collection.id);
-    });
-
-    actions.appendChild(del);
-
-    item.appendChild(textWrap);
-    item.appendChild(actions);
-
-    item.addEventListener("click", () => {
-      if (!collection.keys || Object.keys(collection.keys).length === 0) {
-        setStatus("This collection is empty.");
-        return;
-      }
-      currentSecrets = collection.keys;
-      currentPrefix = collection.title || "";
-      currentHost = collection.host || currentHost || "";
-      currentLoadedCollectionId = collection.id || null;
-      isDiffView = false;
-      currentDataSource = "saved";
-      renderTable(currentSecrets);
-      setPostLoadVisible(true);
-      setCompareVisible(true, true);
-      showSearch();
-      setStatus(`Loaded ${Object.keys(currentSecrets).length} keys`);
-    });
-
-    fragment.appendChild(item);
-  });
-
-  savedList.appendChild(fragment);
-}
-
-function deleteCollection(id) {
-  getCollections((collections) => {
-    const next = collections.filter((item) => item.id !== id);
-    STORAGE.setCollections(next, () => {
-      if (next.length === 0) {
-        resetUI();
-        updateSavedAvailability();
-        setStatus("No collections remaining.");
-        return;
-      }
-      renderCollectionsList(next);
-      updateSavedAvailability();
-      setStatus("Collection deleted.");
-    });
-  });
-}
+/* collections moved to collections.js */
 
 function loadSecretsForContext(ctx, tabId, attempt = 0) {
   setStatus("Fetching keys...");
@@ -1010,11 +443,20 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
     (response) => {
       showLoader(false);
       if (chrome.runtime.lastError || !response) {
-        setStatus("Unable to fetch key values. Reload the extension and refresh Consul.");
+        setStatus("Santa says please refresh and come back.");
         return;
       }
       if (response.error) {
         const message = String(response.error || "");
+        const lower = message.toLowerCase();
+        let friendly = "Santa is unable to get keys. Please refresh and try again.";
+        if (lower.includes("prefix not found")) {
+          friendly = "Santa is unable to get keys for this prefix. Check datacenter/prefix or permissions.";
+        } else if (lower.includes("no consul token captured")) {
+          friendly = "Santa couldn’t find your Consul session yet. Please interact with the Consul UI and try again.";
+        } else if (lower.includes("permission denied") || lower.includes("acl not found") || lower.includes("access")) {
+          friendly = "Santa is unable to get keys: access issue. Ensure your token has key:read and refresh.";
+        }
         const shouldRetry =
           attempt === 0 &&
           tabId &&
@@ -1022,12 +464,12 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
         if (shouldRetry) {
           showLoader(true);
           setStatus("Refreshing Consul session…");
-          ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix).then(() => {
+          TOKEN.ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix).then(() => {
             loadSecretsForContext(ctx, tabId, attempt + 1);
           });
           return;
         }
-        setStatus(message);
+        setStatus(friendly);
         return;
       }
 
@@ -1035,21 +477,23 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
       if (!normalized || Object.keys(normalized).length === 0) {
         const skipped = Number(response?.skipped || 0);
         if (skipped > 0) {
-          setStatus("No direct keys on this page (folders only).");
+          setStatus("Santa sees only folders on this page.");
           return;
         }
-        setStatus("No Consul keys found on this page.");
+        setStatus("Santa is unable to get keys on this page.");
         return;
       }
 
       currentPrefix = response?.prefix || `/${ctx.prefix.replace(/\/$/, "")}`;
       currentSecrets = normalized;
       currentHost = ctx.host || "";
+      currentScheme = ctx.scheme || "https";
+      currentDc = ctx.dc || "";
       currentLoadedCollectionId = null;
       isDiffView = false;
       currentDataSource = "page";
 
-      renderTable(currentSecrets);
+      TABLE.renderTable(currentSecrets);
       setPostLoadVisible(true);
       setCompareVisible(true, true);
       showSearch();
@@ -1079,7 +523,7 @@ loadBtn.addEventListener("click", async () => {
   const ctx = parseConsulContext(tabUrl);
   if (!ctx) {
     showLoader(false);
-    setStatus("Not a valid Consul KV page.");
+    setStatus("Santa can only help you on a valid Consul page.");
     return;
   }
 
@@ -1091,7 +535,7 @@ loadBtn.addEventListener("click", async () => {
   }
 
   hideHostPermissionPrompt();
-  await ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+  await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
   loadSecretsForContext(ctx, tab.id);
 });
 
@@ -1111,151 +555,15 @@ grantPermissionBtn.addEventListener("click", async () => {
   hideHostPermissionPrompt();
   showLoader(true);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id) await ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+  if (tab?.id) await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
   loadSecretsForContext(ctx, tab?.id);
 });
 
-function setUploadModalOpen(open) {
-  if (!uploadModal) return;
-  uploadModal.classList.toggle("hidden", !open);
-}
-
-function setUploadTab(tab) {
-  const isEnv = tab === "env";
-  if (uploadTabEnv) {
-    uploadTabEnv.classList.toggle("active", isEnv);
-    uploadTabEnv.setAttribute("aria-selected", isEnv ? "true" : "false");
-  }
-  if (uploadTabJetbrains) {
-    uploadTabJetbrains.classList.toggle("active", !isEnv);
-    uploadTabJetbrains.setAttribute("aria-selected", !isEnv ? "true" : "false");
-  }
-  if (uploadPanelEnv) uploadPanelEnv.classList.toggle("hidden", !isEnv);
-  if (uploadPanelJetbrains) uploadPanelJetbrains.classList.toggle("hidden", isEnv);
-  if (pendingUpload) pendingUpload.source = isEnv ? "env" : "jetbrains";
-}
-
-function updateUploadSummary() {
-  const ctx = pendingUpload?.ctx;
-  const count = Number(pendingUpload?.entries?.length || 0);
-  if (uploadConfirmBtn) uploadConfirmBtn.disabled = count === 0;
-  if (!uploadSummary) return;
-  if (!ctx) {
-    uploadSummary.textContent = `${count} keys ready`;
-    return;
-  }
-  uploadSummary.textContent = `${count} keys → /${String(ctx.prefix || "").replace(/\/$/, "")}`;
-}
-
-function openUploadModal(ctx, tabId) {
-  pendingUpload = { ctx, tabId, source: "env", entries: [], fileName: "" };
-  if (envFileInput) envFileInput.value = "";
-  if (envFileLabel) envFileLabel.textContent = "No file chosen";
-  if (jetbrainsPasteInput) jetbrainsPasteInput.value = "";
-  setUploadTab("env");
-  updateUploadSummary();
-  setUploadModalOpen(true);
-}
-
-function closeUploadModal() {
-  pendingUpload = null;
-  setUploadModalOpen(false);
-}
-
-uploadModalClose?.addEventListener("click", closeUploadModal);
-uploadCancelBtn?.addEventListener("click", closeUploadModal);
-uploadTabEnv?.addEventListener("click", () => setUploadTab("env"));
-uploadTabJetbrains?.addEventListener("click", () => setUploadTab("jetbrains"));
-
-chooseEnvFileBtn?.addEventListener("click", () => {
-  if (envFileInput) envFileInput.value = "";
-  envFileInput?.click();
-});
-
-uploadKeyValuesBtn?.addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) {
-    setStatus("Unable to read current tab.");
-    return;
-  }
-
-  const tabUrl = tab?.url || "";
-  const ctx = parseConsulContext(tabUrl);
-  if (!ctx) {
-    setStatus("Not a valid Consul KV page.");
-    return;
-  }
-
-  const allowed = await hasConsulHostPermission(ctx.host);
-  if (!allowed) {
-    showHostPermissionPrompt(ctx);
-    return;
-  }
-
-  openUploadModal(ctx, tab.id);
-});
-
-envFileInput?.addEventListener("change", async () => {
-  const file = envFileInput?.files?.[0];
-  if (!file) return;
-  if (!pendingUpload?.ctx || !pendingUpload?.tabId) return;
-
-  const text = await file.text();
-  const parsed = parseDotEnv(text);
-  pendingUpload.entries = parsed.entries;
-  pendingUpload.fileName = file.name || "";
-
-  if (envFileLabel) {
-    const skipped = Number(parsed.skipped || 0);
-    const skippedText = skipped ? ` · ${skipped} skipped` : "";
-    envFileLabel.textContent = `${file.name || "selected"} · ${parsed.entries.length} keys${skippedText}`;
-  }
-
-  updateUploadSummary();
-});
-
-jetbrainsPasteInput?.addEventListener("input", () => {
-  if (!pendingUpload?.ctx || !pendingUpload?.tabId) return;
-  const parsed = parseJetBrainsPairs(jetbrainsPasteInput.value || "");
-  pendingUpload.entries = parsed.entries;
-  updateUploadSummary();
-});
-
-uploadConfirmBtn?.addEventListener("click", async () => {
-  const upload = pendingUpload;
-  const ctx = upload?.ctx;
-  const tabId = upload?.tabId;
-  const entries = upload?.entries;
-  if (!ctx || !tabId || !Array.isArray(entries) || entries.length === 0) return;
-
-  const target = `/${String(ctx.prefix || "").replace(/\/$/, "")}`;
-  const ok = confirm(`Upload ${entries.length} keys to ${ctx.host}${target}? This will create/update values.`);
-  if (!ok) return;
-
-  showLoader(true);
-  if (uploadConfirmBtn) uploadConfirmBtn.disabled = true;
-
-  await ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix);
-  chrome.runtime.sendMessage(
-    { type: CONSTANTS.MESSAGE_TYPES.APPLY_ENV, scheme: ctx.scheme, host: ctx.host, dc: ctx.dc, prefix: ctx.prefix, entries },
-    (res) => {
-      showLoader(false);
-      if (uploadConfirmBtn) uploadConfirmBtn.disabled = false;
-
-      if (chrome.runtime.lastError || !res) {
-        setStatus("Failed to upload key values.");
-        return;
-      }
-      if (!res.ok) {
-        setStatus(String(res.error || "Failed to upload key values."));
-        return;
-      }
-
-      closeUploadModal();
-      setStatus(`Uploaded ${Number(res.applied || 0)} keys to ${target}`);
-      loadSecretsForContext(ctx, tabId);
-    }
-  );
+/* upload wiring delegated to upload.js */
+UPLOAD.wireOpenButton(uploadKeyValuesBtn, {
+  parseConsulContext,
+  hasHostPermission: hasConsulHostPermission,
+  showHostPermissionPrompt
 });
 
 saveBtn.addEventListener("click", () => {
@@ -1328,7 +636,7 @@ loadSavedBtn.addEventListener("click", () => {
       }
 
       currentHost = host;
-      renderCollectionsList(scoped);
+      COLLECTIONS.renderList(scoped);
       setPostLoadVisible(false);
       setCompareVisible(true, scoped.length >= 2);
       loadSavedBtn.disabled = false;
@@ -1344,7 +652,7 @@ downloadBtn.addEventListener("click", () => {
   }
 
   const envText = Object.entries(currentSecrets)
-    .map(([key, value]) => `${key}=${formatEnvValue(value)}`)
+    .map(([key, value]) => `${key}=${ENV.formatEnvValue(value)}`)
     .join("\n");
 
   const blob = new Blob([envText], { type: "text/plain" });
@@ -1371,75 +679,27 @@ intellijBtn.addEventListener("click", () => {
   }
 
   const pairs = Object.entries(currentSecrets)
-    .map(([key, value]) => `${key}=${formatEnvValue(value)}`)
+    .map(([key, value]) => `${key}=${ENV.formatEnvValue(value)}`)
     .join(";");
   const payload = pairs.length > 0 ? `${pairs};` : "";
   navigator.clipboard.writeText(payload);
   setStatus("Copied JetBrains format.");
 });
 
-compareBtn.addEventListener("click", () => {
-  if (comparePickerOpen) {
-    comparePickerOpen = false;
-    compareSelectedIds = [];
-    diffLeftTitle = "";
-    diffRightTitle = "";
-    setCompareVisible(true, true);
-
-    if (currentView === "list") {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tab = tabs?.[0];
-        const ctx = tab?.url ? parseConsulContext(tab.url) : null;
-        const host = ctx?.host || currentHost || "";
-        getCollections((collections) => {
-          const scoped = host ? (collections || []).filter((c) => (c.host || "") === host) : [];
-          renderCollectionsList(scoped);
-          setPostLoadVisible(false);
-          setCompareVisible(true, scoped.length >= 2);
-          showSearch();
-          setStatus(`Loaded ${scoped.length} collections`);
-        });
-      });
-      return;
-    }
-
-    isDiffView = false;
-    renderTable(currentSecrets, false);
-    setPostLoadVisible(true);
-    setCompareVisible(true, true);
-    showSearch();
-    setStatus("Compare cancelled.");
-    return;
-  }
-
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs?.[0];
-    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
-    const host = ctx?.host || currentHost || "";
-    if (!host) {
-      setStatus("Open a Consul KV page to compare host-scoped collections.");
-      setCompareVisible(true, false);
-      return;
-    }
-
-    getCollections((collections) => {
-      const scoped = (collections || []).filter((c) => (c.host || "") === host);
-      if (scoped.length < 2) {
-        setStatus("Need at least 2 saved collections to compare.");
-        setCompareVisible(true, false);
-        return;
-      }
-
-      currentHost = host;
-      comparePickerOpen = true;
-      compareSelectedIds = [];
-      setPostLoadVisible(false);
-      setCompareVisible(true, true);
-      renderComparePicker(scoped);
-      showSearch();
-      setStatus("Select two collections (A then B) to compare.");
-    });
-  });
+/* compare wiring delegated to compare.js */
+COMPARE.wireButton(compareBtn, {
+  parseConsulContext,
+  getCollections,
+  renderScopedList: (host, scoped) => {
+    currentHost = host;
+    COLLECTIONS.renderList(scoped);
+  },
+  getCurrentView: () => currentView,
+  getCurrentHost: () => currentHost,
+  setCurrentHost: (h) => {
+    currentHost = h;
+  },
+  getCurrentSecrets: () => currentSecrets
 });
 
 searchInput.addEventListener("input", () => {
