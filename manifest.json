@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
   "name": "SecretsSanta",
-  "description": "Securely view, save and compare Consul KV secrets.",
+  "description": "Securely view, save, edit and compare Consul KV secrets.",
   "homepage_url": "https://ninadsutrave.in",
   "author": {
     "name": "Ninad Sutrave",
-    "email": "ninad@ninadsutrave.in"
+    "email": "ninadsutrave@gmail.com"
   },
   "version": "1.0.0",
   "minimum_chrome_version": "116",

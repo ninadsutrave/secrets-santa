@@ -12,18 +12,27 @@ function decodeBase64Utf8(b64) {
   return new TextDecoder().decode(bytes);
 }
 
-function buildKvValueUrl({ host, dc, fullKey }) {
-  return `https://${host}/v1/kv/${encodeURI(fullKey)}?dc=${encodeURIComponent(dc)}`;
+function buildKvValueUrl({ scheme = "https", host, dc, fullKey }) {
+  const s = String(scheme || "https").replace(":", "");
+  return `${s}://${host}/v1/kv/${encodeURI(fullKey)}?dc=${encodeURIComponent(dc)}`;
 }
 
-function buildKvListKeysUrl({ host, dc, prefix }) {
-  const p = prefix.endsWith("/") ? prefix : `${prefix}/`;
-  return `https://${host}/v1/kv/${encodeURI(p)}?dc=${encodeURIComponent(dc)}&keys&separator=/`;
+function buildKvListKeysUrl({ scheme = "https", host, dc, prefix }) {
+  const p = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
+  const s = String(scheme || "https").replace(":", "");
+  const base = p ? `/v1/kv/${encodeURI(p)}` : "/v1/kv/";
+  const sep = encodeURIComponent("/");
+  return `${s}://${host}${base}?keys&dc=${encodeURIComponent(dc)}&separator=${sep}`;
+}
+
+function buildKvPutUrl({ scheme = "https", host, dc, fullKey }) {
+  const s = String(scheme || "https").replace(":", "");
+  return `${s}://${host}/v1/kv/${encodeURI(fullKey)}?dc=${encodeURIComponent(dc)}`;
 }
 
 globalThis.SECRETS_SANTA.CONSUL = {
   decodeBase64Utf8,
   buildKvValueUrl,
-  buildKvListKeysUrl
+  buildKvListKeysUrl,
+  buildKvPutUrl
 };
-

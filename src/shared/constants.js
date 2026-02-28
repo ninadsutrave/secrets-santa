@@ -22,10 +22,11 @@ globalThis.SECRETS_SANTA.CONSTANTS = {
     FETCH_KEYS: "FETCH_KEYS",
     FETCH_VISIBLE_VALUES: "FETCH_VISIBLE_VALUES",
     FETCH_PAGE_VALUES: "FETCH_PAGE_VALUES",
-    SET_TOKEN: "SET_TOKEN"
+    SET_TOKEN: "SET_TOKEN",
+    APPLY_ENV: "APPLY_ENV"
   },
 
   UI: {
-    SENSITIVE_KEY_REGEX: /(key|secret|token|password|pwd)/i
+    SENSITIVE_KEY_REGEX: /(key|secret|token|password|pwd|credential|otp|cvv|ssn|pin|jwt|cookie|signature|bearer)/i
   }
 };

@@ -12,23 +12,23 @@ importScripts(
 
 const { CONSTANTS, STORAGE, CONSUL } = globalThis.SECRETS_SANTA;
 
-let cachedToken = "";
-
-STORAGE.getToken((token) => {
-  if (typeof token === "string") cachedToken = token;
-});
+const cachedTokens = {};
 
 /* Persists the latest X-Consul-Token so popup requests can reuse it. */
-function updateToken(token) {
+function updateToken(token, host) {
   if (!token || typeof token !== "string") return;
-  if (token === cachedToken) return;
-  cachedToken = token;
-  STORAGE.setToken(token);
+  const h = String(host || "").toLowerCase();
+  if (!h) return;
+  if (token === cachedTokens[h]) return;
+  cachedTokens[h] = token;
+  STORAGE.setTokenForHost(h, token);
 }
 
-function clearToken() {
-  cachedToken = "";
-  STORAGE.clearToken();
+function clearToken(host) {
+  const h = String(host || "").toLowerCase();
+  if (!h) return;
+  delete cachedTokens[h];
+  STORAGE.clearTokenForHost(h);
 }
 
 function isAclNotFound(errorText) {
@@ -49,7 +49,12 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     const tokenHeader = headers.find(
       (h) => String(h?.name || "").toLowerCase() === CONSTANTS.HEADERS.CONSUL_TOKEN_REQUEST_LOWER
     );
-    if (tokenHeader?.value) updateToken(tokenHeader.value);
+    if (tokenHeader?.value) {
+      try {
+        const host = new URL(details.url).host;
+        updateToken(tokenHeader.value, host);
+      } catch {}
+    }
   },
   { urls: CONSTANTS.WEB_REQUEST_URLS },
   ["requestHeaders", "extraHeaders"]
@@ -61,14 +66,15 @@ chrome.commands.onCommand.addListener((command) => {
   chrome.tabs.create({ url });
 });
 
-function getActiveToken() {
-  if (cachedToken) return Promise.resolve(cachedToken);
-  return new Promise((resolve) => STORAGE.getToken((t) => resolve(t || "")));
+function getActiveToken(host) {
+  const h = String(host || "").toLowerCase();
+  if (h && cachedTokens[h]) return Promise.resolve(cachedTokens[h]);
+  return new Promise((resolve) => STORAGE.getTokenForHost(h, (t) => resolve(t || "")));
 }
 
 /* Fetches a single KV value and decodes base64 payload returned by Consul. */
-async function fetchKeyValue({ host, dc, fullKey, token }) {
-  const url = CONSUL.buildKvValueUrl({ host, dc, fullKey });
+async function fetchKeyValue({ scheme, host, dc, fullKey, token }) {
+  const url = CONSUL.buildKvValueUrl({ scheme, host, dc, fullKey });
   const doFetch = async (t) => {
     const headers = t ? { [CONSTANTS.HEADERS.CONSUL_TOKEN_REQUEST]: t } : {};
     return fetch(url, { method: "GET", credentials: "include", headers });
@@ -87,11 +93,23 @@ async function fetchKeyValue({ host, dc, fullKey, token }) {
     }
 
     const defaultAclPolicy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+    if (res.status === 401 || res.status === 403) {
+      try {
+        const latest = await getActiveToken(host);
+        if (latest && latest !== token) {
+          const retryWithLatest = await doFetch(latest);
+          if (retryWithLatest.ok) {
+            res = retryWithLatest;
+            errorText = "";
+          }
+        }
+      } catch {}
+    }
     if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy === "deny") {
       if (isAclNotFound(errorText) || isPermissionDenied(errorText) || !errorText) {
         const retry = await doFetch("");
         if (retry.ok) {
-          clearToken();
+          clearToken(host);
           res = retry;
           errorText = "";
         }
@@ -100,7 +118,7 @@ async function fetchKeyValue({ host, dc, fullKey, token }) {
 
     if (!res.ok) {
       if ((res.status === 401 || res.status === 403) && isAclNotFound(errorText)) {
-        clearToken();
+        clearToken(host);
       }
       return { ok: false, status: res.status, errorText };
     }
@@ -114,8 +132,8 @@ async function fetchKeyValue({ host, dc, fullKey, token }) {
 }
 
 /* Lists direct leaf keys under a prefix and counts folders (non-recursive). */
-async function listDirectKeys({ host, dc, prefix, token }) {
-  const url = CONSUL.buildKvListKeysUrl({ host, dc, prefix });
+async function listDirectKeys({ scheme, host, dc, prefix, token }) {
+  const url = CONSUL.buildKvListKeysUrl({ scheme, host, dc, prefix });
   const doFetch = async (t) => {
     const headers = t ? { [CONSTANTS.HEADERS.CONSUL_TOKEN_REQUEST]: t } : {};
     return fetch(url, { method: "GET", credentials: "include", headers });
@@ -123,6 +141,15 @@ async function listDirectKeys({ host, dc, prefix, token }) {
 
   let res = await doFetch(token);
   let errorText = "";
+  let firstStatus = res.status;
+  let firstErrorText = "";
+  try {
+    if (!res.ok) {
+      firstErrorText = String(await res.text()).slice(0, 360);
+    }
+  } catch {
+    firstErrorText = "";
+  }
 
   if (!res.ok) {
     try {
@@ -132,11 +159,24 @@ async function listDirectKeys({ host, dc, prefix, token }) {
     }
 
     const defaultAclPolicy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
-    if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy === "deny") {
+    if (res.status === 401 || res.status === 403) {
+      try {
+        const latest = await getActiveToken(host);
+        if (latest && latest !== token) {
+          const retryWithLatest = await doFetch(latest);
+          if (retryWithLatest.ok) {
+            res = retryWithLatest;
+            errorText = "";
+          }
+        }
+      } catch {}
+    }
+    // Avoid retrying without a token when policy is "deny" (common in org-hosted Consul) to prevent confusing 404s.
+    if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy !== "deny") {
       if (isAclNotFound(errorText) || isPermissionDenied(errorText) || !errorText) {
         const retry = await doFetch("");
         if (retry.ok) {
-          clearToken();
+          clearToken(host);
           res = retry;
           errorText = "";
         }
@@ -144,12 +184,23 @@ async function listDirectKeys({ host, dc, prefix, token }) {
     }
 
     if (!res.ok) {
-      if (!token && defaultAclPolicy === "deny" && !errorText) {
+      const defaultAclPolicyFinal = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+      if (res.status === 404) {
+        const notFoundMsg =
+          defaultAclPolicyFinal === "deny"
+            ? "Prefix not found or not visible with current ACLs (404). Ensure the token has key:read on this prefix and datacenter."
+            : "Prefix not found (404). Check datacenter/prefix or permissions.";
+        return { ok: false, status: 404, errorText: notFoundMsg };
+      }
+      if (!token && defaultAclPolicyFinal === "deny" && !errorText && !firstErrorText) {
         errorText =
           "No Consul token captured yet. Open the Consul UI (logged in) and try again so Santa can reuse your token.";
       }
+      if (!errorText && firstErrorText) {
+        errorText = firstErrorText;
+      }
       if ((res.status === 401 || res.status === 403) && isAclNotFound(errorText)) {
-        clearToken();
+        clearToken(host);
       }
       return { ok: false, status: res.status, errorText };
     }
@@ -179,11 +230,111 @@ async function listDirectKeys({ host, dc, prefix, token }) {
   return { ok: true, keys, folders };
 }
 
+async function putKeyValue({ scheme, host, dc, fullKey, token, value }) {
+  const url = CONSUL.buildKvPutUrl({ scheme, host, dc, fullKey });
+  const doFetch = async (t) => {
+    const headers = t ? { [CONSTANTS.HEADERS.CONSUL_TOKEN_REQUEST]: t } : {};
+    return fetch(url, { method: "PUT", credentials: "include", headers, body: String(value ?? "") });
+  };
+
+  let res = await doFetch(token);
+  let errorText = "";
+
+  if (!res.ok) {
+    try {
+      if (res.status === 403 || res.status === 401) {
+        errorText = String(await res.text()).slice(0, 360);
+      }
+    } catch {
+      errorText = "";
+    }
+
+    const defaultAclPolicy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+    if (res.status === 401 || res.status === 403) {
+      try {
+        const latest = await getActiveToken(host);
+        if (latest && latest !== token) {
+          const retryWithLatest = await doFetch(latest);
+          if (retryWithLatest.ok) {
+            res = retryWithLatest;
+            errorText = "";
+          }
+        }
+      } catch {}
+    }
+    if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy === "deny") {
+      if (isAclNotFound(errorText) || isPermissionDenied(errorText) || !errorText) {
+        const retry = await doFetch("");
+        if (retry.ok) {
+          clearToken(host);
+          res = retry;
+          errorText = "";
+        }
+      }
+    }
+
+    if (!res.ok) {
+      if ((res.status === 401 || res.status === 403) && isAclNotFound(errorText)) {
+        clearToken(host);
+      }
+      return { ok: false, status: res.status, errorText };
+    }
+  }
+
+  return { ok: true };
+}
+
+async function applyEnv({ scheme, host, dc, prefix, entries }) {
+  const p = String(prefix || "");
+  const token = await getActiveToken(host);
+  if (token) updateToken(token, host);
+
+  const pairs = Array.isArray(entries) ? entries : [];
+  const cleaned = pairs
+    .map((e) => ({ key: String(e?.key || "").trim(), value: e?.value ?? "" }))
+    .filter((e) => Boolean(e.key));
+
+  if (cleaned.length === 0) {
+    return { ok: false, error: "No keys found in .env file." };
+  }
+
+  const concurrency = 6;
+  let applied = 0;
+  let failed = 0;
+  let firstError = "";
+
+  for (let i = 0; i < cleaned.length; i += concurrency) {
+    const batch = cleaned.slice(i, i + concurrency);
+    const results = await Promise.all(
+      batch.map(async ({ key, value }) => {
+        const normalizedKey = key.startsWith("/") ? key.slice(1) : key;
+        const fullKey = normalizedKey.startsWith(p) ? normalizedKey : `${p}${normalizedKey}`;
+        return putKeyValue({ scheme, host, dc, fullKey, token, value });
+      })
+    );
+
+    results.forEach((r) => {
+      if (!r.ok) {
+        failed += 1;
+        if (!firstError && r.errorText) firstError = r.errorText;
+        return;
+      }
+      applied += 1;
+    });
+  }
+
+  if (failed > 0) {
+    return { ok: false, applied, failed, error: firstError || "Failed to apply some keys." };
+  }
+
+  return { ok: true, applied, failed: 0 };
+}
+
 /* Fetches values for a known list of keys under a prefix with limited concurrency. */
-async function fetchVisibleValues({ host, dc, prefix, keys }) {
-  const p = prefix.endsWith("/") ? prefix : `${prefix}/`;
-  const token = await getActiveToken();
-  if (token) updateToken(token);
+async function fetchVisibleValues({ scheme, host, dc, prefix, keys }) {
+  const p = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
+  const token = await getActiveToken(host);
+  if (token) updateToken(token, host);
 
   if (!Array.isArray(keys) || keys.length === 0) {
     return { keys: {}, prefix: `/${p.replace(/\/$/, "")}`, failed: 0, skipped: 0 };
@@ -202,7 +353,7 @@ async function fetchVisibleValues({ host, dc, prefix, keys }) {
         const safeKey = String(key || "").trim();
         if (!safeKey) return { key: "", ok: false, status: 0 };
         const fullKey = `${p}${safeKey}`;
-        const res = await fetchKeyValue({ host, dc, fullKey, token });
+        const res = await fetchKeyValue({ scheme, host, dc, fullKey, token });
         return { key: safeKey, ...res };
       })
     );
@@ -235,12 +386,13 @@ async function fetchVisibleValues({ host, dc, prefix, keys }) {
 }
 
 /* Lists keys for the current prefix and fetches all direct leaf values. */
-async function fetchPageValues({ host, dc, prefix }) {
-  const p = prefix.endsWith("/") ? prefix : `${prefix}/`;
-  const token = await getActiveToken();
+async function fetchPageValues({ scheme, host, dc, prefix }) {
+  const p = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
+  const token = await getActiveToken(host);
 
-  const listRes = await listDirectKeys({ host, dc, prefix: p, token });
+  const listRes = await listDirectKeys({ scheme, host, dc, prefix: p, token });
   if (!listRes.ok) {
+    if (listRes.errorText) return { error: listRes.errorText };
     if (isAclNotFound(listRes.errorText)) {
       return {
         error: "Consul says: ACL not found. The captured token is invalid/expired. Refresh the Consul UI page so Santa can capture a fresh token, then try again."
@@ -257,7 +409,7 @@ async function fetchPageValues({ host, dc, prefix }) {
     return { keys: {}, prefix: `/${p.replace(/\/$/, "")}`, failed: 0, skipped: Number(listRes.folders || 0) };
   }
 
-  const valuesRes = await fetchVisibleValues({ host, dc, prefix: p, keys });
+  const valuesRes = await fetchVisibleValues({ scheme, host, dc, prefix: p, keys });
   if (valuesRes?.error) return valuesRes;
   return { ...valuesRes, skipped: Number(valuesRes.skipped || 0) + Number(listRes.folders || 0) };
 }
@@ -265,15 +417,23 @@ async function fetchPageValues({ host, dc, prefix }) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === CONSTANTS.MESSAGE_TYPES.SET_TOKEN) {
     const token = String(message?.token || "");
-    if (token) updateToken(token);
+    const host = String(message?.host || "");
+    if (token && host) updateToken(token, host);
     sendResponse({ ok: Boolean(token) });
     return;
   }
 
+  if (message?.type === CONSTANTS.MESSAGE_TYPES.APPLY_ENV) {
+    applyEnv(message)
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: false, error: "Failed to apply .env file." }));
+    return true;
+  }
+
   if (message?.type === CONSTANTS.MESSAGE_TYPES.FETCH_KEYS) {
-    getActiveToken()
+    getActiveToken(message?.host)
       .then((token) => {
-        if (token) updateToken(token);
+        if (token && message?.host) updateToken(token, message.host);
         sendResponse({ token: token || "" });
       })
       .catch(() => sendResponse({ error: "Failed to fetch keys." }));

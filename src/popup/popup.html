@@ -9,21 +9,84 @@
 
 <body>
   <div class="container">
-    <h2>🎅 SecretsSanta</h2>
-    <div class="subtitle">Consul Companion</div>
-
-    <button id="dark-toggle">🌙</button>
+    <div class="header">
+      <div class="brand">
+        <div class="brand-mark">SS</div>
+        <div class="brand-text">
+          <div class="brand-title">SecretsSanta</div>
+          <div class="brand-subtitle">Consul Companion</div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="downloadBtn" class="icon-button hidden has-tip" aria-label="Download .env" title="Download .env" data-tip="Download .env">⤓</button>
+        <button id="saveBtn" class="icon-button hidden has-tip" aria-label="Save snapshot" title="Save snapshot" data-tip="Save snapshot">💾</button>
+        <button id="dark-toggle" class="icon-button has-tip" aria-label="Toggle dark mode" data-tip="Toggle theme">🌙</button>
+      </div>
+    </div>
 
     <div id="status"></div>
 
     <div class="controls">
-      <button id="loadBtn">Load Secrets</button>
-      <button id="grantPermissionBtn" class="hidden">Grant Santa Access</button>
-      <button id="loadSavedBtn" disabled>Load Saved Collections</button>
-      <button id="saveBtn" class="hidden" disabled>Save Collection</button>
-      <button id="compareBtn" class="hidden" disabled>Compare</button>
-      <button id="downloadBtn" class="hidden" disabled>Download .env</button>
-      <button id="intellijBtn" class="hidden" disabled>Copy IntelliJ</button>
+      <button id="loadBtn" class="btn primary span-2">Load Secrets</button>
+      <button id="grantPermissionBtn" class="btn primary span-2 hidden">Grant Santa Access</button>
+      <button id="loadSavedBtn" class="btn" disabled>Load Saved</button>
+      <button id="uploadKeyValuesBtn" class="btn">Upload Key Values</button>
+      <button id="compareBtn" class="btn hidden" disabled>Compare</button>
+      <button id="intellijBtn" class="btn hidden" disabled>Copy JetBrains</button>
+    </div>
+    <input id="envFileInput" type="file" accept=".env,text/plain" class="hidden" />
+
+    <div id="uploadModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="uploadModalTitle">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title" id="uploadModalTitle">Upload Key Values</div>
+          <button id="uploadModalClose" class="icon-button" aria-label="Close">✕</button>
+        </div>
+
+        <div class="segmented" role="tablist" aria-label="Upload source">
+          <button id="uploadTabEnv" class="segmented-btn active" role="tab" aria-selected="true">.env</button>
+          <button id="uploadTabJetbrains" class="segmented-btn" role="tab" aria-selected="false">JetBrains</button>
+        </div>
+
+        <div id="uploadPanelEnv" class="modal-panel">
+          <button id="chooseEnvFileBtn" class="btn">Choose .env file</button>
+          <div class="modal-help" id="envFileLabel">No file chosen</div>
+        </div>
+
+        <div id="uploadPanelJetbrains" class="modal-panel hidden">
+          <textarea id="jetbrainsPasteInput" class="textarea" placeholder="Paste JetBrains env var format: A=B;C=D;"></textarea>
+          <div class="modal-help">Tip: use “Copy JetBrains” from a saved collection, then paste here.</div>
+        </div>
+
+        <div class="modal-footer">
+          <div class="modal-summary" id="uploadSummary">0 keys ready</div>
+          <div class="modal-actions">
+            <button id="uploadCancelBtn" class="btn">Cancel</button>
+            <button id="uploadConfirmBtn" class="btn primary" disabled>Upload</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="jsonModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="jsonModalTitle">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title" id="jsonModalTitle">JSON</div>
+          <button id="jsonModalClose" class="icon-button" aria-label="Close">✕</button>
+        </div>
+
+        <pre id="jsonModalBody" class="json-modal-pre"></pre>
+
+        <div class="modal-footer">
+          <div class="modal-summary" id="jsonModalMeta"></div>
+          <div class="modal-actions">
+            <button id="jsonModalCopy" class="btn">Copy</button>
+            <button id="jsonModalDone" class="btn primary">Done</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="search-container">
@@ -54,6 +117,13 @@
 
   <script src="../shared/constants.js"></script>
   <script src="../shared/storage.js"></script>
+  <script src="modules/env-utils.js"></script>
+  <script src="modules/modals.js"></script>
+  <script src="modules/table.js"></script>
+  <script src="modules/token.js"></script>
+  <script src="modules/collections.js"></script>
+  <script src="modules/compare.js"></script>
+  <script src="modules/upload.js"></script>
   <script src="popup.js"></script>
 </body>
 

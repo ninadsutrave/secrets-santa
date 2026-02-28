@@ -3,7 +3,7 @@
    - Renders keys/values with masking/copy/pretty JSON
    - Saves and compares snapshots */
 
-const { CONSTANTS, STORAGE } = globalThis.SECRETS_SANTA;
+const { CONSTANTS, STORAGE, TOKEN, ENV, MODALS, TABLE, COLLECTIONS, COMPARE, UPLOAD } = globalThis.SECRETS_SANTA;
 
 const loadBtn = document.getElementById("loadBtn");
 const grantPermissionBtn = document.getElementById("grantPermissionBtn");
@@ -12,6 +12,20 @@ const saveBtn = document.getElementById("saveBtn");
 const compareBtn = document.getElementById("compareBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 const intellijBtn = document.getElementById("intellijBtn");
+const envFileInput = document.getElementById("envFileInput");
+const uploadKeyValuesBtn = document.getElementById("uploadKeyValuesBtn");
+const uploadModal = document.getElementById("uploadModal");
+const uploadModalClose = document.getElementById("uploadModalClose");
+const uploadCancelBtn = document.getElementById("uploadCancelBtn");
+const uploadConfirmBtn = document.getElementById("uploadConfirmBtn");
+const uploadSummary = document.getElementById("uploadSummary");
+const uploadTabEnv = document.getElementById("uploadTabEnv");
+const uploadTabJetbrains = document.getElementById("uploadTabJetbrains");
+const uploadPanelEnv = document.getElementById("uploadPanelEnv");
+const uploadPanelJetbrains = document.getElementById("uploadPanelJetbrains");
+const chooseEnvFileBtn = document.getElementById("chooseEnvFileBtn");
+const envFileLabel = document.getElementById("envFileLabel");
+const jetbrainsPasteInput = document.getElementById("jetbrainsPasteInput");
 const table = document.getElementById("secretsTable");
 const tbody = document.getElementById("secretsBody");
 const savedList = document.getElementById("savedList");
@@ -20,10 +34,12 @@ const statusDiv = document.getElementById("status");
 const searchContainer = document.getElementById("search-container");
 const searchInput = document.getElementById("search-input");
 const darkToggle = document.getElementById("dark-toggle");
+const jsonModal = document.getElementById("jsonModal");
 
 let currentSecrets = {};
 let currentView = "table";
 let currentPrefix = "";
+let currentHost = "";
 let currentLoadedCollectionId = null;
 let isDiffView = false;
 let comparePickerOpen = false;
@@ -31,32 +47,50 @@ let compareSelectedIds = [];
 let diffLeftTitle = "";
 let diffRightTitle = "";
 let pendingConsulContext = null;
+let pendingUpload = null;
+let currentDataSource = "none";
+let currentScheme = "https";
+let currentDc = "";
 
 const SENSITIVE_REGEX = CONSTANTS.UI.SENSITIVE_KEY_REGEX;
 
+// Sets the user-visible status banner text at the top of the popup.
+// Pass a short, actionable message. Empty/falsey clears the banner.
 function setStatus(text) {
   statusDiv.textContent = text || "";
 }
 
+// Shows or hides the global loader spinner overlay.
+// Use for short-lived background actions; keep visible time minimal.
 function showLoader(visible) {
   if (!loader) return;
   loader.classList.toggle("hidden", !visible);
 }
 
+// Ensures the search input is visible to filter the current view (table or list).
+// The actual filtering behavior is bound to the input handler below.
 function showSearch() {
   if (!searchContainer) return;
   searchContainer.classList.add("visible");
 }
 
+// Toggles visibility and enabled state of post-load controls (download, save, JetBrains).
+// Should be enabled only when a concrete set of keys is visible (table view).
 function setPostLoadVisible(visible) {
-  const controls = [saveBtn, downloadBtn, intellijBtn];
+  const controls = [downloadBtn, intellijBtn];
   controls.forEach((btn) => {
     if (!btn) return;
     btn.classList.toggle("hidden", !visible);
     btn.disabled = !visible;
   });
+  if (saveBtn) {
+    saveBtn.classList.toggle("hidden", !visible);
+    saveBtn.disabled = !visible;
+  }
 }
 
+// Controls the Compare button’s visibility and enabled state.
+// The button is available when there are at least 2 saved collections for the host.
 function setCompareVisible(visible, enabled = visible) {
   if (!compareBtn) return;
   compareBtn.classList.toggle("hidden", !visible);
@@ -64,6 +98,8 @@ function setCompareVisible(visible, enabled = visible) {
   compareBtn.textContent = comparePickerOpen ? "Cancel Compare" : "Compare";
 }
 
+// Resets the popup UI to its clean state before a new load or when switching modes.
+// Clears tables/lists, hides modals, resets state flags and UI controls.
 function resetUI() {
   tbody.innerHTML = "";
   if (savedList) savedList.innerHTML = "";
@@ -75,13 +111,118 @@ function resetUI() {
   compareSelectedIds = [];
   diffLeftTitle = "";
   diffRightTitle = "";
+  currentHost = "";
   pendingConsulContext = null;
+  pendingUpload = null;
+  currentDataSource = "none";
   if (grantPermissionBtn) grantPermissionBtn.classList.add("hidden");
   setCompareVisible(false, false);
   if (searchContainer) searchContainer.classList.remove("visible");
   if (searchInput) searchInput.value = "";
+  if (envFileInput) envFileInput.value = "";
+  if (envFileLabel) envFileLabel.textContent = "No file chosen";
+  if (jetbrainsPasteInput) jetbrainsPasteInput.value = "";
+  if (uploadConfirmBtn) uploadConfirmBtn.disabled = true;
+  if (uploadSummary) uploadSummary.textContent = "0 keys ready";
+  if (uploadModal) uploadModal.classList.add("hidden");
+  if (jsonModal) jsonModal.classList.add("hidden");
 }
 
+TABLE.setup({
+  table,
+  tbody,
+  savedList,
+  intellijBtn,
+  setStatus,
+  showLoader,
+  getContext: () => ({ prefix: currentPrefix, host: currentHost, scheme: currentScheme, dc: currentDc }),
+  onValueSaved: (k, v) => {
+    currentSecrets[k] = v;
+  },
+  SENSITIVE_REGEX: SENSITIVE_REGEX,
+  setCurrentView: (view) => {
+    currentView = view;
+  },
+  setIsDiffView: (val) => {
+    isDiffView = val;
+  },
+  getDiffLeftTitle: () => diffLeftTitle,
+  getDiffRightTitle: () => diffRightTitle
+});
+
+COLLECTIONS.setup({
+  savedList,
+  table,
+  STORAGE,
+  setStatus,
+  setPostLoadVisible,
+  setCompareVisible,
+  showSearch,
+  TABLE,
+  onLoadCollection: (collection) => {
+    currentSecrets = collection.keys;
+    currentPrefix = collection.title || "";
+    currentHost = collection.host || currentHost || "";
+    currentLoadedCollectionId = collection.id || null;
+    isDiffView = false;
+    currentDataSource = "saved";
+    TABLE.renderTable(currentSecrets);
+    setPostLoadVisible(true);
+    setCompareVisible(true, true);
+    showSearch();
+    setStatus(`Loaded ${Object.keys(currentSecrets).length} keys`);
+  }
+});
+
+COMPARE.setup({
+  savedList,
+  setStatus,
+  setPostLoadVisible,
+  setCompareVisible,
+  showSearch,
+  setCurrentView: (view) => {
+    currentView = view;
+  },
+  setIsDiffView: (val) => {
+    isDiffView = val;
+  },
+  setDiffTitles: (a, b) => {
+    diffLeftTitle = a;
+    diffRightTitle = b;
+  },
+  getDiffLeftTitle: () => diffLeftTitle,
+  getDiffRightTitle: () => diffRightTitle,
+  TABLE
+});
+
+UPLOAD.setup({
+  elements: {
+    uploadModal,
+    uploadModalClose,
+    uploadCancelBtn,
+    uploadConfirmBtn,
+    uploadSummary,
+    uploadTabEnv,
+    uploadTabJetbrains,
+    uploadPanelEnv,
+    uploadPanelJetbrains,
+    chooseEnvFileBtn,
+    envFileInput,
+    envFileLabel,
+    jetbrainsPasteInput
+  },
+  setStatus,
+  showLoader,
+  ENV,
+  TOKEN,
+  CONSTANTS,
+  onApplied: (ctx, tabId) => {
+    loadSecretsForContext(ctx, tabId);
+  }
+});
+
+// Converts API responses into a flat key→value map.
+// Supports either array of {key,value} or a plain object already keyed by KV.
 function normalizeKeys(keys) {
   if (!keys) return null;
   if (Array.isArray(keys)) {
@@ -96,6 +237,8 @@ function normalizeKeys(keys) {
   return null;
 }
 
+// Parses a Consul UI URL and extracts: scheme, host, datacenter, and KV prefix (with trailing slash).
+// Returns null if the URL does not resemble a Consul KV page.
 function parseConsulContext(url) {
   try {
     const u = new URL(url);
@@ -105,22 +248,29 @@ function parseConsulContext(url) {
     if (uiIndex === -1 || kvIndex === -1) return null;
     const dc = parts[uiIndex + 1] || "";
     const prefix = parts.slice(kvIndex + 1).join("/");
-    if (!dc || !prefix) return null;
-    return { host: u.host, dc, prefix: prefix.endsWith("/") ? prefix : `${prefix}/` };
+    const scheme = String(u.protocol || "").replace(":", "") || "https";
+    if (!dc) return null;
+    const normalizedPrefix = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
+    return { scheme, host: u.host, dc, prefix: normalizedPrefix };
   } catch {
     return null;
   }
 }
 
+// Builds the optional host permission origins for a given Consul host.
+// Includes both https and http schemes to satisfy sites that downgrade.
 function getConsulOrigins(host) {
   return [`https://${host}/*`, `http://${host}/*`];
 }
 
+// Checks whether the extension already has the required host permissions for the Consul host.
 function hasConsulHostPermission(host) {
   const origins = getConsulOrigins(host);
   return new Promise((resolve) => chrome.permissions.contains({ origins }, (has) => resolve(Boolean(has))));
 }
 
+// Prompts the user to grant optional host permissions for the Consul host.
+// Resolves to true when granted, false otherwise.
 function requestConsulHostPermission(host) {
   const origins = getConsulOrigins(host);
   return new Promise((resolve) =>
@@ -128,6 +278,8 @@ function requestConsulHostPermission(host) {
   );
 }
 
+// Shows a CTA prompting the user to grant host access.
+// Stores the context so the grant action can resume loading immediately after.
 function showHostPermissionPrompt(ctx) {
   pendingConsulContext = ctx;
   if (grantPermissionBtn) grantPermissionBtn.classList.remove("hidden");
@@ -136,11 +288,13 @@ function showHostPermissionPrompt(ctx) {
   );
 }
 
+// Hides any visible host permission CTA.
 function hideHostPermissionPrompt() {
   pendingConsulContext = null;
   if (grantPermissionBtn) grantPermissionBtn.classList.add("hidden");
 }
 
+// Attempts a heuristic token capture from local/session storage in the page context.
 async function tryCaptureTokenFromTab(tabId) {
   try {
     const results = await chrome.scripting.executeScript({
@@ -243,453 +397,79 @@ async function tryCaptureTokenFromTab(tabId) {
   }
 }
 
+/* token helpers moved to token.js */
+
+/* token functions moved to token.js */
+
 function getCollections(callback) {
   STORAGE.getCollections(callback);
 }
 
+// Enables or disables the “Load Saved” button depending on host-scoped collections.
 function updateSavedAvailability() {
-  getCollections((collections) => {
-    loadSavedBtn.disabled = !collections || collections.length === 0;
-  });
-}
-
-function formatEnvValue(value) {
-  if (value === null || value === undefined) return "";
-  return String(value).replace(/\r?\n/g, "\\n");
-}
-
-function truncate(str, max = 80) {
-  if (!str) return "";
-  if (str.length <= max) return str;
-  return str.slice(0, max) + "...";
-}
-
-function mask(value) {
-  return "•".repeat(Math.min(value.length, 12));
-}
-
-function isValidJSON(str) {
-  try {
-    if (typeof str !== "string") return false;
-    const trimmed = str.trim();
-    if (!trimmed) return false;
-    if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return false;
-    const parsed = JSON.parse(trimmed);
-    return parsed !== null && typeof parsed === "object";
-  } catch {
-    return false;
-  }
-}
-
-function buildValueActions(key, value, valueContainer, actionsContainer) {
-  const textSpan = document.createElement("span");
-  textSpan.className = "value-text";
-
-  const isSensitive = SENSITIVE_REGEX.test(key);
-  const isJSON = isValidJSON(value);
-  const truncationLimit = 120;
-
-  let formattedJSON = null;
-  if (isJSON) {
-    formattedJSON = JSON.stringify(JSON.parse(String(value).trim()), null, 2);
-  }
-
-  const valueWrap = document.createElement("div");
-  valueWrap.className = "value-wrap";
-
-  const initialText = isSensitive
-    ? mask(String(value))
-    : isJSON
-      ? truncate(formattedJSON, truncationLimit)
-      : truncate(String(value), truncationLimit);
-
-  textSpan.textContent = initialText;
-  if (isSensitive) textSpan.classList.add("masked");
-
-  const copy = document.createElement("span");
-  copy.textContent = "📋";
-  copy.className = "value-copy";
-  copy.addEventListener("click", (event) => {
-    event.stopPropagation();
-    navigator.clipboard.writeText(String(value));
-    setStatus(`Copied ${key}`);
-  });
-
-  valueWrap.appendChild(textSpan);
-  valueWrap.appendChild(copy);
-  valueContainer.appendChild(valueWrap);
-
-  if (!isSensitive && !isJSON && typeof value === "string" && value.length > truncationLimit) {
-    let expanded = false;
-    textSpan.style.cursor = "pointer";
-    textSpan.addEventListener("click", () => {
-      expanded = !expanded;
-      textSpan.textContent = expanded ? value : truncate(value, truncationLimit);
-    });
-  }
-
-  if (isSensitive) {
-    const eye = document.createElement("span");
-    eye.textContent = "👁";
-    eye.className = "eye";
-
-    let visible = false;
-    eye.addEventListener("click", (event) => {
-      event.stopPropagation();
-      visible = !visible;
-      textSpan.classList.remove("json-view");
-      textSpan.textContent = visible ? String(value) : mask(String(value));
-    });
-
-    actionsContainer.appendChild(eye);
-    return;
-  }
-
-  if (isJSON) {
-    const jsonBtn = document.createElement("span");
-    jsonBtn.textContent = "{}";
-    jsonBtn.className = "json-btn";
-
-    let expanded = false;
-    jsonBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      expanded = !expanded;
-      if (expanded) {
-        textSpan.textContent = formattedJSON;
-        textSpan.classList.add("json-view");
-      } else {
-        textSpan.classList.remove("json-view");
-        textSpan.textContent = truncate(formattedJSON, truncationLimit);
-      }
-    });
-
-    actionsContainer.appendChild(jsonBtn);
-  }
-}
-
-function renderTable(data, isDiff = false) {
-  tbody.innerHTML = "";
-  currentView = "table";
-  if (savedList) savedList.classList.add("hidden");
-  if (table) table.classList.remove("hidden");
-  isDiffView = isDiff;
-
-  if (table) {
-    const headers = table.querySelectorAll("th");
-    if (headers.length >= 3) {
-      headers[0].textContent = "Key";
-      headers[1].textContent = isDiff
-        ? `Values (A: ${diffLeftTitle || "—"} · B: ${diffRightTitle || "—"})`
-        : "Value";
-      headers[2].textContent = isDiff ? "Type" : "Actions";
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs?.[0];
+    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
+    const host = ctx?.host || currentHost || "";
+    if (!host) {
+      loadSavedBtn.disabled = true;
+      return;
     }
-  }
-
-  const entries = Object.entries(data);
-  const batchSize = 200;
-  let index = 0;
-
-  function renderBatch() {
-    const fragment = document.createDocumentFragment();
-    const slice = entries.slice(index, index + batchSize);
-
-    slice.forEach(([key, raw]) => {
-      const diffType = isDiff ? raw.type : null;
-
-      const row = document.createElement("tr");
-      if (diffType) row.classList.add(`diff-${diffType}`);
-
-      const keyCell = document.createElement("td");
-      keyCell.textContent = key;
-
-      const valueCell = document.createElement("td");
-      const actionsCell = document.createElement("td");
-
-      if (isDiff) {
-        const wrap = document.createElement("div");
-        wrap.className = "diff-values";
-
-        const appendLine = (label, v) => {
-          const line = document.createElement("div");
-          line.className = "diff-line";
-
-          const labelEl = document.createElement("div");
-          labelEl.className = "diff-label";
-          labelEl.textContent = label;
-
-          const lineValue = document.createElement("div");
-          const lineActions = document.createElement("div");
-          lineActions.className = "diff-actions";
-
-          if (v === undefined) {
-            const missingWrap = document.createElement("div");
-            missingWrap.className = "value-wrap";
-            const missingText = document.createElement("span");
-            missingText.className = "value-text";
-            missingText.textContent = "—";
-            missingWrap.appendChild(missingText);
-            lineValue.appendChild(missingWrap);
-          } else {
-            buildValueActions(key, String(v), lineValue, lineActions);
-          }
-
-          line.appendChild(labelEl);
-          line.appendChild(lineValue);
-          line.appendChild(lineActions);
-          wrap.appendChild(line);
-        };
-
-        appendLine("A", raw.aValue);
-        appendLine("B", raw.bValue);
-        valueCell.appendChild(wrap);
-
-        const tag = document.createElement("span");
-        tag.className = `diff-tag diff-tag-${diffType || "changed"}`;
-        tag.textContent = diffType === "added" ? "ADD" : diffType === "removed" ? "DEL" : "CHG";
-        actionsCell.appendChild(tag);
-      } else {
-        buildValueActions(key, raw, valueCell, actionsCell);
-      }
-
-      row.appendChild(keyCell);
-      row.appendChild(valueCell);
-      row.appendChild(actionsCell);
-      fragment.appendChild(row);
-    });
-
-    tbody.appendChild(fragment);
-    index += batchSize;
-    if (index < entries.length) requestAnimationFrame(renderBatch);
-  }
-
-  renderBatch();
-}
-
-function buildDiff(aKeys, bKeys) {
-  const a = aKeys || {};
-  const b = bKeys || {};
-  const diff = {};
-
-  for (const key in b) {
-    if (!(key in a)) {
-      diff[key] = { aValue: undefined, bValue: b[key], type: "added" };
-    } else if (a[key] !== b[key]) {
-      diff[key] = { aValue: a[key], bValue: b[key], type: "changed" };
-    }
-  }
-
-  for (const key in a) {
-    if (!(key in b)) {
-      diff[key] = { aValue: a[key], bValue: undefined, type: "removed" };
-    }
-  }
-
-  return diff;
-}
-
-function runCompareForIds(collections, ids) {
-  const left = (collections || []).find((c) => c.id === ids[0]);
-  const right = (collections || []).find((c) => c.id === ids[1]);
-  if (!left || !right) return;
-
-  diffLeftTitle = left.title || "A";
-  diffRightTitle = right.title || "B";
-
-  const diff = buildDiff(left.keys, right.keys);
-  if (Object.keys(diff).length === 0) {
-    setStatus(`No differences found between A (${diffLeftTitle}) and B (${diffRightTitle}).`);
-    return;
-  }
-
-  comparePickerOpen = false;
-  compareSelectedIds = [];
-  setCompareVisible(true, true);
-  setPostLoadVisible(false);
-
-  isDiffView = true;
-  renderTable(diff, true);
-
-  const counts = { added: 0, changed: 0, removed: 0 };
-  Object.values(diff).forEach((item) => {
-    if (!item || !item.type) return;
-    if (counts[item.type] !== undefined) counts[item.type] += 1;
-  });
-
-  setStatus(
-    `Comparing A (${diffLeftTitle}) → B (${diffRightTitle}) · ${Object.keys(diff).length} differences (added ${counts.added}, changed ${counts.changed}, removed ${counts.removed})`
-  );
-}
-
-function renderComparePicker(collections) {
-  if (!savedList) return;
-  savedList.innerHTML = "";
-  currentView = "list";
-  if (table) table.classList.add("hidden");
-  savedList.classList.remove("hidden");
-
-  const fragment = document.createDocumentFragment();
-
-  collections
-    .slice()
-    .sort((a, b) => ((b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)))
-    .forEach((collection) => {
-      const item = document.createElement("li");
-      item.className = "saved-item";
-      item.dataset.key = (collection.title || "").toLowerCase();
-
-      const textWrap = document.createElement("div");
-
-      const titleSpan = document.createElement("div");
-      titleSpan.className = "saved-title";
-      titleSpan.textContent = collection.title || "Collection";
-
-      const count = Object.keys(collection.keys || {}).length;
-      const metaSpan = document.createElement("div");
-      metaSpan.className = "saved-meta";
-      metaSpan.textContent = `${count} keys`;
-
-      textWrap.appendChild(titleSpan);
-      textWrap.appendChild(metaSpan);
-
-      const actions = document.createElement("div");
-      actions.className = "saved-actions";
-
-      const checkbox = document.createElement("span");
-      checkbox.className = "saved-delete";
-      const idx = compareSelectedIds.indexOf(collection.id);
-      checkbox.textContent = idx === 0 ? "①" : idx === 1 ? "②" : "☐";
-
-      actions.appendChild(checkbox);
-
-      item.appendChild(textWrap);
-      item.appendChild(actions);
-
-      item.addEventListener("click", () => {
-        const id = collection.id;
-        if (!id) return;
-
-        let next = compareSelectedIds.slice();
-        const existingIndex = next.indexOf(id);
-        if (existingIndex !== -1) {
-          next.splice(existingIndex, 1);
-        } else {
-          if (next.length >= 2) next = next.slice(1);
-          next.push(id);
-        }
-
-        compareSelectedIds = next;
-
-        if (compareSelectedIds.length === 2) {
-          runCompareForIds(collections, compareSelectedIds);
-          return;
-        }
-
-        setStatus(`Selected ${compareSelectedIds.length}/2 collections (A then B)`);
-        renderComparePicker(collections);
-      });
-
-      fragment.appendChild(item);
-    });
-
-  savedList.appendChild(fragment);
-}
-
-function renderCollectionsList(collections) {
-  if (!savedList) return;
-  savedList.innerHTML = "";
-  currentView = "list";
-  if (table) table.classList.add("hidden");
-  savedList.classList.remove("hidden");
-
-  const fragment = document.createDocumentFragment();
-
-  collections.forEach((collection) => {
-    const item = document.createElement("li");
-    item.className = "saved-item";
-    item.dataset.key = (collection.title || "").toLowerCase();
-
-    const textWrap = document.createElement("div");
-
-    const titleSpan = document.createElement("div");
-    titleSpan.className = "saved-title";
-    titleSpan.textContent = collection.title || "Collection";
-
-    const count = Object.keys(collection.keys || {}).length;
-    const metaSpan = document.createElement("div");
-    metaSpan.className = "saved-meta";
-    metaSpan.textContent = `${count} keys`;
-
-    textWrap.appendChild(titleSpan);
-    textWrap.appendChild(metaSpan);
-
-    const actions = document.createElement("div");
-    actions.className = "saved-actions";
-
-    const del = document.createElement("span");
-    del.className = "saved-delete";
-    del.textContent = "🗑";
-    del.addEventListener("click", (event) => {
-      event.stopPropagation();
-      deleteCollection(collection.id);
-    });
-
-    actions.appendChild(del);
-
-    item.appendChild(textWrap);
-    item.appendChild(actions);
-
-    item.addEventListener("click", () => {
-      if (!collection.keys || Object.keys(collection.keys).length === 0) {
-        setStatus("This collection is empty.");
-        return;
-      }
-      currentSecrets = collection.keys;
-      currentPrefix = collection.title || "";
-      currentLoadedCollectionId = collection.id || null;
-      isDiffView = false;
-      renderTable(currentSecrets);
-      setPostLoadVisible(true);
-      setCompareVisible(true, true);
-      showSearch();
-      setStatus(`Loaded ${Object.keys(currentSecrets).length} keys`);
-    });
-
-    fragment.appendChild(item);
-  });
-
-  savedList.appendChild(fragment);
-}
-
-function deleteCollection(id) {
-  getCollections((collections) => {
-    const next = collections.filter((item) => item.id !== id);
-    STORAGE.setCollections(next, () => {
-      if (next.length === 0) {
-        resetUI();
-        updateSavedAvailability();
-        setStatus("No collections remaining.");
-        return;
-      }
-      renderCollectionsList(next);
-      updateSavedAvailability();
-      setStatus("Collection deleted.");
+    COLLECTIONS.getAll((collections) => {
+      const scoped = (collections || []).filter((c) => (c.host || "") === host);
+      loadSavedBtn.disabled = scoped.length === 0;
     });
   });
 }
 
-function loadSecretsForContext(ctx) {
+/* env helpers moved to env-utils.js */
+
+/* json modal moved to modals.js */
+
+/* json test moved to env-utils.js */
+
+/* buildValueActions moved to table.js */
+
+/* table rendering moved to table.js */
+
+/* compare moved to compare.js */
+
+/* collections moved to collections.js */
+
+function loadSecretsForContext(ctx, tabId, attempt = 0) {
   setStatus("Fetching keys...");
   chrome.runtime.sendMessage(
-    { type: CONSTANTS.MESSAGE_TYPES.FETCH_PAGE_VALUES, host: ctx.host, dc: ctx.dc, prefix: ctx.prefix },
+    { type: CONSTANTS.MESSAGE_TYPES.FETCH_PAGE_VALUES, scheme: ctx.scheme, host: ctx.host, dc: ctx.dc, prefix: ctx.prefix },
     (response) => {
       showLoader(false);
       if (chrome.runtime.lastError || !response) {
-        setStatus("Unable to fetch key values. Reload the extension and refresh Consul.");
+        setStatus("Santa says please refresh and come back.");
         return;
       }
       if (response.error) {
         const message = String(response.error || "");
-        setStatus(message);
+        const lower = message.toLowerCase();
+        let friendly = "Santa is unable to get keys. Please refresh and try again.";
+        if (lower.includes("prefix not found")) {
+          friendly = "Santa is unable to get keys for this prefix. Check datacenter/prefix or permissions.";
+        } else if (lower.includes("no consul token captured")) {
+          friendly = "Santa couldn’t find your Consul session yet. Please interact with the Consul UI and try again.";
+        } else if (lower.includes("permission denied") || lower.includes("acl not found") || lower.includes("access")) {
+          friendly = "Santa is unable to get keys: access issue. Ensure your token has key:read and refresh.";
+        }
+        const shouldRetry =
+          attempt === 0 &&
+          tabId &&
+          (message.toLowerCase().includes("acl not found") || message.toLowerCase().includes("no consul token captured"));
+        if (shouldRetry) {
+          showLoader(true);
+          setStatus("Refreshing Consul session…");
+          TOKEN.ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix).then(() => {
+            loadSecretsForContext(ctx, tabId, attempt + 1);
+          });
+          return;
+        }
+        setStatus(friendly);
         return;
       }
 
@@ -697,19 +477,23 @@ function loadSecretsForContext(ctx) {
       if (!normalized || Object.keys(normalized).length === 0) {
         const skipped = Number(response?.skipped || 0);
         if (skipped > 0) {
-          setStatus("No direct keys on this page (folders only).");
+          setStatus("Santa sees only folders on this page.");
           return;
         }
-        setStatus("No Consul keys found on this page.");
+        setStatus("Santa is unable to get keys on this page.");
         return;
       }
 
       currentPrefix = response?.prefix || `/${ctx.prefix.replace(/\/$/, "")}`;
       currentSecrets = normalized;
+      currentHost = ctx.host || "";
+      currentScheme = ctx.scheme || "https";
+      currentDc = ctx.dc || "";
       currentLoadedCollectionId = null;
       isDiffView = false;
+      currentDataSource = "page";
 
-      renderTable(currentSecrets);
+      TABLE.renderTable(currentSecrets);
       setPostLoadVisible(true);
       setCompareVisible(true, true);
       showSearch();
@@ -739,7 +523,7 @@ loadBtn.addEventListener("click", async () => {
   const ctx = parseConsulContext(tabUrl);
   if (!ctx) {
     showLoader(false);
-    setStatus("Not a valid Consul KV page.");
+    setStatus("Santa can only help you on a valid Consul page.");
     return;
   }
 
@@ -751,7 +535,8 @@ loadBtn.addEventListener("click", async () => {
   }
 
   hideHostPermissionPrompt();
-  loadSecretsForContext(ctx);
+  await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+  loadSecretsForContext(ctx, tab.id);
 });
 
 grantPermissionBtn.addEventListener("click", async () => {
@@ -769,7 +554,16 @@ grantPermissionBtn.addEventListener("click", async () => {
 
   hideHostPermissionPrompt();
   showLoader(true);
-  loadSecretsForContext(ctx);
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id) await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+  loadSecretsForContext(ctx, tab?.id);
+});
+
+/* upload wiring delegated to upload.js */
+UPLOAD.wireOpenButton(uploadKeyValuesBtn, {
+  parseConsulContext,
+  hasHostPermission: hasConsulHostPermission,
+  showHostPermissionPrompt
 });
 
 saveBtn.addEventListener("click", () => {
@@ -781,31 +575,37 @@ saveBtn.addEventListener("click", () => {
     setStatus("Load secrets from a Consul page first.");
     return;
   }
-
-  getCollections((collections) => {
-    const title = currentPrefix;
-    const matches = (collections || []).filter((c) => (c.title || "") === title);
-    const now = Date.now();
-
-    let next = [];
-
-    if (matches.length === 0) {
-      const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(now);
-      const collection = { id, title, createdAt: now, updatedAt: now, keys: currentSecrets };
-      next = [...collections, collection];
-    } else {
-      const keep = matches.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0];
-      next = (collections || [])
-        .filter((c) => (c.id || "") === (keep.id || "") || (c.title || "") !== title)
-        .map((c) => {
-          if ((c.id || "") !== (keep.id || "")) return c;
-          return { ...c, title, updatedAt: now, keys: currentSecrets };
-        });
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs?.[0];
+    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
+    const host = currentHost || ctx?.host || "";
+    if (!host) {
+      setStatus("Open a Consul KV page to save a host-scoped collection.");
+      return;
     }
 
-    STORAGE.setCollections(next, () => {
-      setStatus("Collection saved.");
-      updateSavedAvailability();
+    getCollections((collections) => {
+      const title = currentPrefix;
+      const matches = (collections || []).filter((c) => (c.title || "") === title && (c.host || "") === host);
+      const now = Date.now();
+
+      let next = [];
+
+      if (matches.length === 0) {
+        const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(now);
+        const collection = { id, host, title, createdAt: now, updatedAt: now, keys: currentSecrets };
+        next = [...collections, collection];
+      } else {
+        const keep = matches.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0];
+        next = (collections || [])
+          .filter((c) => (c.id || "") !== (keep.id || ""))
+          .concat([{ ...keep, host, title, updatedAt: now, keys: currentSecrets }]);
+      }
+
+      STORAGE.setCollections(next, () => {
+        setStatus("Collection saved.");
+        updateSavedAvailability();
+      });
     });
   });
 });
@@ -815,19 +615,33 @@ loadSavedBtn.addEventListener("click", () => {
   resetUI();
   showLoader(true);
 
-  getCollections((collections) => {
-    showLoader(false);
-    if (!collections || collections.length === 0) {
-      setStatus("No saved collections found.");
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs?.[0];
+    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
+    const host = ctx?.host || currentHost || "";
+    if (!host) {
+      showLoader(false);
+      setStatus("Open a Consul KV page to view host-scoped saved collections.");
       loadSavedBtn.disabled = true;
       return;
     }
 
-    renderCollectionsList(collections);
-    setPostLoadVisible(false);
-    setCompareVisible(true, collections.length >= 2);
-    loadSavedBtn.disabled = false;
-    setStatus(`Loaded ${collections.length} collections`);
+    getCollections((collections) => {
+      showLoader(false);
+      const scoped = (collections || []).filter((c) => (c.host || "") === host);
+      if (scoped.length === 0) {
+        setStatus("No saved collections found for this host.");
+        loadSavedBtn.disabled = true;
+        return;
+      }
+
+      currentHost = host;
+      COLLECTIONS.renderList(scoped);
+      setPostLoadVisible(false);
+      setCompareVisible(true, scoped.length >= 2);
+      loadSavedBtn.disabled = false;
+      setStatus(`Loaded ${scoped.length} collections`);
+    });
   });
 });
 
@@ -838,14 +652,19 @@ downloadBtn.addEventListener("click", () => {
   }
 
   const envText = Object.entries(currentSecrets)
-    .map(([key, value]) => `${key}=${formatEnvValue(value)}`)
+    .map(([key, value]) => `${key}=${ENV.formatEnvValue(value)}`)
     .join("\n");
 
   const blob = new Blob([envText], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "secrets.env";
+  const base = String(currentPrefix || "secrets")
+    .replace(/^\/+/, "")
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 60);
+  link.download = `${base || "secrets"}.env`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -860,56 +679,27 @@ intellijBtn.addEventListener("click", () => {
   }
 
   const pairs = Object.entries(currentSecrets)
-    .map(([key, value]) => `${key}=${formatEnvValue(value)}`)
+    .map(([key, value]) => `${key}=${ENV.formatEnvValue(value)}`)
     .join(";");
   const payload = pairs.length > 0 ? `${pairs};` : "";
   navigator.clipboard.writeText(payload);
-  setStatus("Copied IntelliJ format.");
+  setStatus("Copied JetBrains format.");
 });
 
-compareBtn.addEventListener("click", () => {
-  if (comparePickerOpen) {
-    comparePickerOpen = false;
-    compareSelectedIds = [];
-    diffLeftTitle = "";
-    diffRightTitle = "";
-    setCompareVisible(true, true);
-
-    if (currentView === "list") {
-      getCollections((collections) => {
-        renderCollectionsList(collections);
-        setPostLoadVisible(false);
-        setCompareVisible(true, (collections || []).length >= 2);
-        showSearch();
-        setStatus(`Loaded ${(collections || []).length} collections`);
-      });
-      return;
-    }
-
-    isDiffView = false;
-    renderTable(currentSecrets, false);
-    setPostLoadVisible(true);
-    setCompareVisible(true, true);
-    showSearch();
-    setStatus("Compare cancelled.");
-    return;
-  }
-
-  getCollections((collections) => {
-    if (!collections || collections.length < 2) {
-      setStatus("Need at least 2 saved collections to compare.");
-      setCompareVisible(true, false);
-      return;
-    }
-
-    comparePickerOpen = true;
-    compareSelectedIds = [];
-    setPostLoadVisible(false);
-    setCompareVisible(true, true);
-    renderComparePicker(collections);
-    showSearch();
-    setStatus("Select two collections (A then B) to compare.");
-  });
+/* compare wiring delegated to compare.js */
+COMPARE.wireButton(compareBtn, {
+  parseConsulContext,
+  getCollections,
+  renderScopedList: (host, scoped) => {
+    currentHost = host;
+    COLLECTIONS.renderList(scoped);
+  },
+  getCurrentView: () => currentView,
+  getCurrentHost: () => currentHost,
+  setCurrentHost: (h) => {
+    currentHost = h;
+  },
+  getCurrentSecrets: () => currentSecrets
 });
 
 searchInput.addEventListener("input", () => {
