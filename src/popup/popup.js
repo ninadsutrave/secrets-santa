@@ -147,7 +147,8 @@ TABLE.setup({
     isDiffView = val;
   },
   getDiffLeftTitle: () => diffLeftTitle,
-  getDiffRightTitle: () => diffRightTitle
+  getDiffRightTitle: () => diffRightTitle,
+  getCanEdit: () => currentDataSource === "page" && !isDiffView
 });
 
 COLLECTIONS.setup({
@@ -413,11 +414,18 @@ function updateSavedAvailability() {
     const host = ctx?.host || currentHost || "";
     if (!host) {
       loadSavedBtn.disabled = true;
+      // Allow loading even without host to support "any website" requirement
+      // But we need to know if any collections exist at all
+      COLLECTIONS.getAll((collections) => {
+        loadSavedBtn.disabled = !collections || collections.length === 0;
+      });
       return;
     }
     COLLECTIONS.getAll((collections) => {
-      const scoped = (collections || []).filter((c) => (c.host || "") === host);
-      loadSavedBtn.disabled = scoped.length === 0;
+      // If we have a host, prioritize that? Or just show all?
+      // User said "Load Saved should be cliackable on any tab"
+      // So logic: always check if ANY collection exists.
+      loadSavedBtn.disabled = !collections || collections.length === 0;
     });
   });
 }
@@ -615,33 +623,35 @@ loadSavedBtn.addEventListener("click", () => {
   resetUI();
   showLoader(true);
 
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs?.[0];
-    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
-    const host = ctx?.host || currentHost || "";
-    if (!host) {
-      showLoader(false);
-      setStatus("Open a Consul KV page to view host-scoped saved collections.");
+  // We no longer require a Consul tab to load saved collections.
+  getCollections((collections) => {
+    showLoader(false);
+    if (!collections || collections.length === 0) {
+      setStatus("No saved collections found.");
       loadSavedBtn.disabled = true;
       return;
     }
 
-    getCollections((collections) => {
-      showLoader(false);
-      const scoped = (collections || []).filter((c) => (c.host || "") === host);
-      if (scoped.length === 0) {
-        setStatus("No saved collections found for this host.");
-        loadSavedBtn.disabled = true;
-        return;
-      }
-
-      currentHost = host;
-      COLLECTIONS.renderList(scoped);
-      setPostLoadVisible(false);
-      setCompareVisible(true, scoped.length >= 2);
-      loadSavedBtn.disabled = false;
-      setStatus(`Loaded ${scoped.length} collections`);
+    // Group by host
+    const grouped = {};
+    collections.forEach(c => {
+      const h = c.host || "Unknown Host";
+      if (!grouped[h]) grouped[h] = [];
+      grouped[h].push(c);
     });
+
+    COLLECTIONS.renderList(collections, true); // true for "grouped mode"
+    
+    setPostLoadVisible(false);
+    setCompareVisible(true, collections.length >= 2);
+    loadSavedBtn.disabled = false;
+    setStatus(`Loaded ${collections.length} collections`);
+    
+    // Copy Jetbrains button visible but disabled on Load Saved page
+    if (intellijBtn) {
+      intellijBtn.classList.remove("hidden");
+      intellijBtn.disabled = true;
+    }
   });
 });
 
@@ -734,3 +744,61 @@ STORAGE.getDarkMode((isDark) => {
 });
 
 updateSavedAvailability();
+
+// Global tooltip handler
+const globalTooltip = document.getElementById("globalTooltip");
+let tooltipTimeout;
+
+document.body.addEventListener("mouseover", (e) => {
+  const target = e.target.closest("[data-tip]");
+  if (!target) {
+    if (globalTooltip) {
+      globalTooltip.classList.remove("visible");
+      globalTooltip.classList.add("hidden");
+    }
+    return;
+  }
+
+  const tipText = target.getAttribute("data-tip");
+  if (!tipText) return;
+
+  clearTimeout(tooltipTimeout);
+  if (globalTooltip) {
+    globalTooltip.textContent = tipText;
+    const rect = target.getBoundingClientRect();
+    const tooltipRect = globalTooltip.getBoundingClientRect();
+    const container = document.querySelector(".container");
+    const containerRect = container
+      ? container.getBoundingClientRect()
+      : { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
+
+    let top = rect.bottom + 6;
+    let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+
+    const minLeft = containerRect.left + 4;
+    const maxLeft = containerRect.right - tooltipRect.width - 4;
+    if (left < minLeft) left = minLeft;
+    if (left > maxLeft) left = maxLeft;
+
+    const maxBottom = containerRect.bottom - 4;
+    if (top + tooltipRect.height > maxBottom) {
+      top = rect.top - tooltipRect.height - 6;
+      if (top < containerRect.top + 4) {
+        top = containerRect.top + 4;
+      }
+    }
+
+    globalTooltip.style.top = `${top}px`;
+    globalTooltip.style.left = `${left}px`;
+    globalTooltip.classList.remove("hidden");
+    globalTooltip.classList.add("visible");
+  }
+});
+
+document.body.addEventListener("mouseout", (e) => {
+  const target = e.target.closest("[data-tip]");
+  if (target && globalTooltip) {
+    globalTooltip.classList.remove("visible");
+    globalTooltip.classList.add("hidden");
+  }
+});

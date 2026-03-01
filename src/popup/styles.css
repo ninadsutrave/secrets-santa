@@ -382,35 +382,14 @@ td:nth-child(2) {
   opacity: 0.8;
 }
 
-/* Clean tooltips */
+/* Clean tooltips - Handled by global JS tooltip to avoid clipping */
 .has-tip,
 [data-tip],
 .icon-btn[data-tip],
 .btn[data-tip] {
-  position: relative;
+  /* No relative positioning needed for global tooltip */
 }
 
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(17, 24, 39, 0.95);
-  color: #fff;
-  padding: 5px 8px;
-  border-radius: 8px;
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-[data-tip]:hover::after {
-  opacity: 1;
-}
 
 .diff-values {
   display: flex;
@@ -576,35 +555,36 @@ body.dark #status {
   display: none !important;
 }
 
+/* Modal */
 .modal {
   position: fixed;
-  inset: 0;
-  z-index: 200;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(15, 23, 42, 0.7);
   display: flex;
-  align-items: flex-start;
   justify-content: center;
-  padding: 16px;
-  overflow: auto;
-}
-
-.modal-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(2, 6, 23, 0.55);
+  align-items: flex-start; /* Align to top to allow scrolling */
+  padding: 40px 16px;
+  z-index: 200;
+  opacity: 1;
+  visibility: visible;
+  overflow-y: auto; /* Enable vertical scrolling for the overlay itself */
 }
 
 .modal-card {
-  position: relative;
+  background: white;
+  border-radius: 12px;
   width: 100%;
-  max-width: 520px;
-  max-height: calc(100vh - 32px);
-  overflow: auto;
-  border-radius: 16px;
-  background: #ffffff;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  box-shadow: 0 16px 50px rgba(15, 23, 42, 0.25);
+  max-width: 420px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  max-height: none; /* Let it grow, overlay handles scroll */
+  border: 1px solid #e2e8f0;
+  margin: auto; /* Centers it if smaller than viewport */
   padding: 12px;
-  margin-top: 16px;
 }
 
 .modal-header {
@@ -647,7 +627,7 @@ body.dark #status {
 }
 
 .modal-panel {
-  padding: 12px 4px 6px 4px;
+  padding: 14px 8px 8px 8px;
 }
 
 .textarea {
@@ -674,7 +654,7 @@ body.dark #status {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 4px 4px 4px;
+  padding: 12px 8px 8px 8px;
   border-top: 1px solid rgba(15, 23, 42, 0.08);
 }
 
@@ -710,7 +690,7 @@ body.dark .json-modal-pre {
 }
 
 body.dark .modal-card {
-  background: #0f172a;
+  background: #14181f;
   border-color: rgba(255, 255, 255, 0.14);
 }
 
@@ -746,11 +726,23 @@ body.dark .modal-footer {
   border-top-color: rgba(255, 255, 255, 0.12);
 }
 
+@media (max-height: 680px) {
+  .modal {
+    padding-top: 16px;
+  }
+}
+
 .footer {
   margin-top: 10px;
   font-size: 11px;
-  color: rgba(15, 23, 42, 0.7);
+  color: rgba(15, 23, 42, 0.55);
   text-align: center;
+}
+
+.review-link {
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: rgba(15, 23, 42, 0.75);
 }
 
 .footer a {
@@ -828,6 +820,23 @@ body.dark .saved-item {
   border-bottom-color: rgba(255, 255, 255, 0.1);
 }
 
+.saved-host-header {
+  padding: 12px 10px 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748b;
+  background: #f1f5f9;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+body.dark .saved-host-header {
+  background: #1e293b;
+  color: #94a3b8;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
 body.dark .saved-item:hover,
 body.dark tbody tr:hover td {
   background: rgba(22, 163, 74, 0.16);
@@ -897,4 +906,31 @@ body.dark .diff-removed {
 
 body.dark .diff-changed {
   background-color: #78350f;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 9999;
+  background: #1e293b;
+  color: #ffffff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  top: 0;
+  left: 0;
+}
+
+.tooltip.visible {
+  opacity: 1;
+}
+
+body.dark .tooltip {
+  background: #cbd5e1;
+  color: #0f172a;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
