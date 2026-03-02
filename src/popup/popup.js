@@ -285,7 +285,7 @@ function showHostPermissionPrompt(ctx) {
   pendingConsulContext = ctx;
   if (grantPermissionBtn) grantPermissionBtn.classList.remove("hidden");
   setStatus(
-    `Santa asks for permission to fetch your key values in a friendly format! \n🎅🏻 Don't worry this is a READ ONLY extension! 🎅🏻 Ho ho ho!.`
+    `Santa asks for permission to access Consul on this host. Your session token is used only in your browser, and actions run on paths you choose.`
   );
 }
 
@@ -749,6 +749,18 @@ updateSavedAvailability();
 const globalTooltip = document.getElementById("globalTooltip");
 let tooltipTimeout;
 
+function updateStatusOpaque() {
+  const doc = document.documentElement;
+  const scrollTop = window.pageYOffset || doc.scrollTop || 0;
+  const viewport = window.innerHeight || 0;
+  const height = Math.max(doc.scrollHeight, document.body.scrollHeight);
+  const nearBottom = scrollTop + viewport >= height - 16;
+  if (statusDiv) statusDiv.classList.toggle("status-opaque", nearBottom && scrollTop > 0);
+}
+
+window.addEventListener("scroll", updateStatusOpaque, { passive: true });
+window.addEventListener("resize", updateStatusOpaque);
+updateStatusOpaque();
 function willOverflow(left, top, tipRect, containerRect) {
   if (left < containerRect.left + 2) return true;
   if (left + tipRect.width > containerRect.right - 2) return true;
