@@ -61,9 +61,9 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 );
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command !== CONSTANTS.COMMANDS.OPEN_UI) return;
-  const url = chrome.runtime.getURL("src/popup/popup.html");
-  chrome.tabs.create({ url });
+  if (command === CONSTANTS.COMMANDS.OPEN_UI) {
+    chrome.action.openPopup();
+  }
 });
 
 function getActiveToken(host) {

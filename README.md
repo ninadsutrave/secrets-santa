@@ -1,136 +1,112 @@
 # 🎅 SecretsSanta
 
-SecretsSanta is a Chrome extension that helps developers fetch, view, copy,
-and compare secrets stored in Consul KV — safely and effortlessly.
+SecretsSanta is a Chrome extension that helps developers fetch, view, copy, and compare secrets stored in Consul KV — safely and effortlessly.
 
-## About
+This is an open source initiative designed to make Consul KV management smoother for everyone.
 
-SecretsSanta is a lightweight Consul KV companion for developers who spend time in the Consul UI and want faster workflows for viewing, copying, exporting, and comparing KV values without writing one-off scripts.
+## ✨ Features
 
-## Who This Is For
+- **Load & View**: Fetches keys/values from your current Consul KV page.
+- **Auto-Auth**: Captures your Consul token automatically (no manual copy-paste).
+- **Secure**: Values are masked by default. Copying always yields the raw value.
+- **Edit & Upload**: Edit values inline or upload bulk keys via `.env` files or JetBrains format.
+- **Compare**: Save snapshots of KV paths and diff them (e.g. Stage vs Prod).
+- **Export**: Download keys as `.env` or copy in JetBrains format.
+- **Modern UI**: Clean, responsive interface with a dark mode that respects your eyes.
 
-- Backend / platform / SRE engineers working with Consul KV
-- Developers debugging configs across environments
-- Anyone who needs quick, safe, copy-friendly access to KV values from the Consul UI
+## 🌐 Availability
 
-## How It Helps
+SecretsSanta works on all Chromium-based browsers and Firefox.
 
-- Turns the current Consul KV page into a clean key/value table
-- Supports safe-by-default viewing (masking sensitive values)
-- Makes exports and IDE imports trivial
-- Enables quick diffs between saved snapshots of KV prefixes
+- **Chrome**: [Install from Web Store](https://chrome.google.com/webstore/detail/secretssanta/placeholder)
+- **Brave**: Compatible via Chrome Web Store.
+- **Edge**: [Install from Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/placeholder)
+- **Firefox**: [Install from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/secretssanta/placeholder)
 
-## ✨ Functionality
+*(Note: Store links are placeholders until published. You can install manually using the steps below.)*
 
-- Load keys and values from the current Consul KV UI page
-- Automatically captures the `X-Consul-Token` from Consul UI network requests
-- Fetches values via Consul KV API (`/v1/kv/...`) using the captured token
-- Shows only direct keys on the current page (skips folders)
-- Displays key/value pairs in a tabular view
-- Masks values for sensitive keys (token/secret/password-like names)
-- Toggles visibility for sensitive values (masked ↔ unmasked)
-- Copies any individual value to clipboard (always copies raw)
-- Detects valid JSON objects/arrays and toggles pretty JSON view
-- Truncates long values while keeping copy available
-- Downloads all loaded keys as a `.env` file
-- Copies all loaded keys in IntelliJ / JetBrains env-var format
-- Uploads key values to the currently opened Consul KV prefix (create/update)
-- Saves a snapshot of the currently loaded prefix to local storage
-- Updates an existing saved collection when saving the same prefix again
-- Lists saved collections with key counts
-- Loads a saved collection into the table view
-- Deletes saved collections
-- Searches keys in both table view and saved-collections view
-- Compares any two saved collections (A → B)
-- Diff view highlights added/changed/removed keys and shows both A and B values
-- Includes a dark mode toggle for the popup UI
-- Keyboard shortcut to open the UI: `Ctrl+Shift+S` (Windows/Linux), `Command+Shift+S` (macOS)
+## 🚀 Getting Started
 
-## 🗂️ Project Structure
+### Prerequisites
 
-- [manifest.json](file:///Users/ninadsutrave/Downloads/SecretsSanta/manifest.json): Chrome extension manifest (entrypoints + permissions)
-- [src/background/background.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/background/background.js): service worker (token capture + Consul API)
-- [src/popup/popup.html](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/popup.html): popup UI markup
-- [src/popup/popup.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/popup.js): popup UI logic
-- [src/popup/modules/env-utils.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/modules/env-utils.js): .env and value utilities
-- [src/popup/modules/modals.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/modules/modals.js): modal wiring for JSON preview
-- [src/popup/modules/table.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/modules/table.js): table rendering and inline edit
-- [src/popup/modules/token.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/modules/token.js): token acquisition from page/network
-- [src/popup/modules/collections.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/modules/collections.js): saved collections list/load/delete
-- [src/popup/modules/compare.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/modules/compare.js): diff building and compare picker
-- [src/popup/modules/upload.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/modules/upload.js): upload flows (.env / JetBrains)
-- [src/popup/styles.css](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/styles.css): popup styling
-- [src/shared/constants.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/shared/constants.js): shared constants (message types, headers, regex, etc.)
-- [src/shared/storage.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/shared/storage.js): shared storage helpers
-- [src/shared/consul.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/shared/consul.js): Consul URL + Base64 decode helpers (background)
+- **Git**: to clone the repository.
+- **Node.js** (optional): strictly speaking not required to run the extension as it uses vanilla JS, but useful if you want to use any future build tools. Currently, the project is zero-dependency vanilla JS/HTML/CSS.
 
-## 🛠 Local Setup
+### Installation (Manual)
 
-1. Install Node.js 18+.
-2. Install dependencies:
-   - Run `npm install` in the repo root.
-3. Load the extension:
-   - Open Chrome → `chrome://extensions`
-   - Enable Developer mode
-   - Click Load unpacked → select the `SecretsSanta` folder
+1.  Clone the repository:
+    ```bash
+    git clone https://github.com/ninadsutrave/secrets-santa.git
+    cd secrets-santa
+    ```
 
-## 🧑‍💻 Development
+2.  **Chrome / Brave / Edge**:
+    - Open `chrome://extensions` (or `edge://extensions`).
+    - Enable **Developer mode** (top right toggle).
+    - Click **Load unpacked**.
+    - Select the `secrets-santa` folder you just cloned.
 
-- Use the unbundled popup for the best DX:
-  - Manifest action points to [src/popup/popup.html](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/popup.html), which loads modular scripts directly.
-- Optional: build a bundled popup during development:
-  - `npm run dev:popup` (watches and emits `dist/popup.bundle.js`)
-  - To preview the bundle, temporarily change the manifest’s `action.default_popup` to [src/popup/popup.prod.html](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/popup.prod.html) and reload the extension.
+3.  **Firefox**:
+    - Open `about:debugging#/runtime/this-firefox`.
+    - Click **Load Temporary Add-on...**.
+    - Select the `manifest.json` file from the cloned folder.
 
-## 📦 Production Build
+## 📖 Usage
 
-- Create a minified bundle:
-  - `npm run build:popup`
-  - Output: [dist/popup.bundle.js](file:///Users/ninadsutrave/Downloads/SecretsSanta/dist/popup.bundle.js)
-- Set the default popup to the production HTML when packaging:
-  - [src/popup/popup.prod.html](file:///Users/ninadsutrave/Downloads/SecretsSanta/src/popup/popup.prod.html) includes only the bundled script.
+1.  **Navigate** to a Consul KV path in your browser (e.g. `http://consul.local/ui/dc1/kv/my-service/`).
+2.  **Open SecretsSanta** (Click the extension icon or press `Ctrl+Shift+S` / `Cmd+Shift+S`).
+3.  **Load Secrets**: Click the button. If prompted, grant permission for the host.
+4.  **Manage**:
+    - Click `⧉` to copy values.
+    - Click `✎` to edit inline.
+    - Click `⟦⟧` to view/copy pretty-printed JSON.
+    - Use **Upload Key Values** to bulk create/update keys.
+    - Use the **Save** icon to snapshot the current view for later comparison.
 
-## 🧩 Installation
+## 🖼️ Preview
 
-1. Download and unzip this repository
-2. Open Chrome → `chrome://extensions`
-3. Enable **Developer mode**
-4. Click **Load unpacked**
-5. Select the `SecretsSanta` folder
+Screenshots of the extension in action:
+- Popup header and controls
+- Table view with masking, copy, edit, JSON
+- Upload Key Values modal (.env / JetBrains)
+- Saved collections list and Compare diff view
 
-### Upload Key Values
+Add images in this section once available (e.g. `docs/screenshots/01-popup.png`, `docs/screenshots/02-table.png`, etc.).
 
-Use **Upload Key Values** to create/update keys under the KV prefix of the currently opened Consul UI page.
+## 🛠️ Development & Contribution
 
-- **.env**: choose a `.env` file containing `KEY=VALUE` lines
-- **JetBrains**: paste JetBrains env-var format like `A=B;C=D;`
+We welcome contributions! This project is open source.
 
-After selecting/pasting, click **Upload** and confirm.
+### How to Contribute
 
-## 🎅 A Little Holiday Spirit
+1.  **Fork** the repository on GitHub.
+2.  **Clone** your fork locally.
+3.  **Create a branch** for your feature or fix.
+4.  **Make changes**: The codebase uses modular vanilla JavaScript (ES modules) in `src/popup/modules/`. No build step is required for development.
+5.  **Test**:
+    - Reload the extension in your browser (`chrome://extensions` -> click refresh icon on the card).
+    - Verify functionality on a real Consul instance or a local dev agent (`consul agent -dev`).
+6.  **Push** your branch and open a **Pull Request** to `https://github.com/ninadsutrave/secrets-santa`.
 
-Santa keeps your secrets snug and safe while you work. He’ll mask the sensitive bits, pretty‑print your JSON gifts, and help you compare lists like a pro. No chimneys required.
+### Testing
 
-## 🔐 Security Notes
+Since this is a browser extension, testing is primarily manual:
+- **Load**: Verify keys load correctly from a Consul page.
+- **Token**: Ensure auth works without manual token entry.
+- **CRUD**: Try editing a value and uploading a .env file.
+- **Diff**: Save two different paths (e.g. `/app/dev` and `/app/prod`) and try the Compare feature.
 
-- Tokens are never logged
-- Secrets are only fetched on demand
-- Masking is UI-only — copying is always raw
+## 🔐 Security
 
-## 🤝 Contributing
+- **Local Execution**: All logic runs locally in your browser.
+- **No Analytics**: We do not track your usage or data.
+- **Token Safety**: Your Consul token is stored in `chrome.storage.local` solely for making API calls on your behalf. It is never transmitted elsewhere.
 
-This is an open‑source initiative. Issues and pull requests are welcome:
+## 📄 License
 
-- Fork the repo and create a feature branch
-- Keep changes focused and well‑scoped
-- Follow existing patterns and avoid introducing dependencies without discussion
-- Test the flows: load secrets, edit/save, upload, compare, and JSON preview
+This project is licensed under the [MIT License](https://github.com/ninadsutrave/secrets-santa/blob/main/LICENSE).
 
-## License
+## ✍️ Author
 
-MIT — see [LICENSE](file:///Users/ninadsutrave/Downloads/SecretsSanta/LICENSE).
-
-## Author
-
-Ninad Sutrave  
-Website: https://ninadsutrave.in
+**Ninad Sutrave**  
+[ninadsutrave.in](https://ninadsutrave.in)

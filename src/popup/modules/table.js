@@ -5,6 +5,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
 (() => {
   let cfg = null;
+  let currentIsDiff = false;
 
   function ensureConfig() {
     if (!cfg) throw new Error("TABLE not initialized");
@@ -49,7 +50,6 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     copy.type = "button";
     copy.textContent = "⧉";
     copy.className = "icon-btn value-copy";
-    copy.title = "Copy";
     copy.setAttribute("data-tip", "Copy value");
     copy.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -83,130 +83,132 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       return { container, editor, saveBtn, cancelBtn };
     };
 
-    const editBtn = document.createElement("button");
-    editBtn.type = "button";
-    editBtn.textContent = "✎";
-    editBtn.className = "icon-btn";
-    editBtn.title = "Edit";
-    editBtn.setAttribute("data-tip", "Edit value");
-    actionsContainer.appendChild(editBtn);
+    const canEdit =
+      typeof cfg.getCanEdit === "function" ? Boolean(cfg.getCanEdit()) : false;
+    if (canEdit && !currentIsDiff) {
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.textContent = "✎";
+      editBtn.className = "icon-btn";
+      editBtn.setAttribute("data-tip", "Edit value");
+      actionsContainer.appendChild(editBtn);
 
-    let editorOpen = false;
-    let editorBlock = null;
-    const rowEl = valueContainer.closest("tr");
+      let editorOpen = false;
+      let editorBlock = null;
+      const rowEl = valueContainer.closest("tr");
 
-    const closeEditor = () => {
-      if (editorBlock) {
-        editorBlock.remove();
-        editorBlock = null;
-      }
-      editorOpen = false;
-      if (rowEl) rowEl.classList.remove("row-editing");
-    };
-
-    editBtn.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      if (editorOpen) return;
-      editorOpen = true;
-      const { container, editor, saveBtn, cancelBtn } = makeEditor();
-      editorBlock = container;
-      valueContainer.appendChild(container);
-      if (rowEl) rowEl.classList.add("row-editing");
-
-      cancelBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeEditor();
-      });
-
-      saveBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const newValue = String(editor.value ?? "");
-        if (newValue === String(value ?? "")) {
-          closeEditor();
-          return;
+      const closeEditor = () => {
+        if (editorBlock) {
+          editorBlock.remove();
+          editorBlock = null;
         }
-        cfg.showLoader(true);
-        try {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          const tabId = tab?.id;
-          if (tabId) {
-            const ctx = cfg.getContext();
-            const prefixRaw = String(ctx.prefix || "").replace(/^\//, "");
-            const prefix = prefixRaw.endsWith("/") ? prefixRaw : `${prefixRaw}/`;
-            await TOKEN.ensureTokenAvailable(tabId, ctx.host, ctx.dc, prefix);
-            await new Promise((resolve) =>
-              chrome.runtime.sendMessage(
-                {
-                  type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.APPLY_ENV,
-                  scheme: ctx.scheme,
-                  host: ctx.host,
-                  dc: ctx.dc,
-                  prefix,
-                  entries: [{ key, value: newValue }]
-                },
-                (res) => {
-                  cfg.showLoader(false);
-                  if (chrome.runtime.lastError || !res || !res.ok) {
-                    const msg = String(res?.error || "Failed to update key.");
-                    cfg.setStatus(msg);
-                    resolve();
-                    return;
-                  }
-                  cfg.onValueSaved(key, newValue);
-                  value = newValue;
-                  const nowSensitive = isSensitiveKey(key);
-                  const nowIsJSON = ENV.isLikelyJSON(newValue);
-                  let display = "";
-                  if (nowSensitive) {
-                    display = ENV.mask(String(newValue));
-                    textSpan.classList.add("masked");
-                  } else if (nowIsJSON) {
-                    const pretty = JSON.stringify(JSON.parse(String(newValue).trim()), null, 2);
-                    display = ENV.truncate(pretty, truncationLimit);
-                    formattedJSON = pretty;
-                    textSpan.classList.remove("masked");
-                  } else {
-                    display = ENV.truncate(String(newValue), truncationLimit);
-                    textSpan.classList.remove("masked");
-                  }
-                  textSpan.textContent = display;
-                  const existingJsonBtn = actionsContainer.querySelector(".json-btn");
-                  if (nowIsJSON) {
-                    if (!existingJsonBtn) {
-                      const jsonBtn = document.createElement("button");
-                      jsonBtn.type = "button";
-                      jsonBtn.textContent = "⟦⟧";
-                      jsonBtn.className = "icon-btn json-btn";
-                      jsonBtn.title = "Pretty JSON";
-                      jsonBtn.setAttribute("data-tip", "Pretty JSON");
-                      jsonBtn.addEventListener("click", (event) => {
-                        event.stopPropagation();
-                        const prettyNow =
-                          formattedJSON || JSON.stringify(JSON.parse(String(newValue).trim()), null, 2);
-                        MODALS.openJsonModal(key, prettyNow);
-                      });
-                      actionsContainer.appendChild(jsonBtn);
-                    }
-                  } else if (existingJsonBtn) {
-                    existingJsonBtn.remove();
-                  }
-                  cfg.setStatus(`Updated ${key}`);
-                  resolve();
-                }
-              )
-            );
-          } else {
-            cfg.showLoader(false);
-            cfg.setStatus("Unable to update key: no active tab.");
+        editorOpen = false;
+        if (rowEl) rowEl.classList.remove("row-editing");
+      };
+
+      editBtn.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        if (editorOpen) return;
+        editorOpen = true;
+        const { container, editor, saveBtn, cancelBtn } = makeEditor();
+        editorBlock = container;
+        valueContainer.appendChild(container);
+        if (rowEl) rowEl.classList.add("row-editing");
+
+        cancelBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeEditor();
+        });
+
+        saveBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const newValue = String(editor.value ?? "");
+          if (newValue === String(value ?? "")) {
+            closeEditor();
+            return;
           }
-        } catch {
-          cfg.showLoader(false);
-          cfg.setStatus("Failed to update key.");
-        } finally {
-          closeEditor();
-        }
+          cfg.showLoader(true);
+          try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tabId = tab?.id;
+            if (tabId) {
+              const ctx = cfg.getContext();
+              const prefixRaw = String(ctx.prefix || "").replace(/^\//, "");
+              const prefix = prefixRaw.endsWith("/") ? prefixRaw : `${prefixRaw}/`;
+              await TOKEN.ensureTokenAvailable(tabId, ctx.host, ctx.dc, prefix);
+              await new Promise((resolve) =>
+                chrome.runtime.sendMessage(
+                  {
+                    type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.APPLY_ENV,
+                    scheme: ctx.scheme,
+                    host: ctx.host,
+                    dc: ctx.dc,
+                    prefix,
+                    entries: [{ key, value: newValue }]
+                  },
+                  (res) => {
+                    cfg.showLoader(false);
+                    if (chrome.runtime.lastError || !res || !res.ok) {
+                      const msg = String(res?.error || "Failed to update key.");
+                      cfg.setStatus(msg);
+                      resolve();
+                      return;
+                    }
+                    cfg.onValueSaved(key, newValue);
+                    value = newValue;
+                    const nowSensitive = isSensitiveKey(key);
+                    const nowIsJSON = ENV.isLikelyJSON(newValue);
+                    let display = "";
+                    if (nowSensitive) {
+                      display = ENV.mask(String(newValue));
+                      textSpan.classList.add("masked");
+                    } else if (nowIsJSON) {
+                      const pretty = JSON.stringify(JSON.parse(String(newValue).trim()), null, 2);
+                      display = ENV.truncate(pretty, truncationLimit);
+                      formattedJSON = pretty;
+                      textSpan.classList.remove("masked");
+                    } else {
+                      display = ENV.truncate(String(newValue), truncationLimit);
+                      textSpan.classList.remove("masked");
+                    }
+                    textSpan.textContent = display;
+                    const existingJsonBtn = actionsContainer.querySelector(".json-btn");
+                    if (nowIsJSON) {
+                      if (!existingJsonBtn) {
+                        const jsonBtn = document.createElement("button");
+                        jsonBtn.type = "button";
+                        jsonBtn.textContent = "⟦⟧";
+                        jsonBtn.className = "icon-btn json-btn";
+                        jsonBtn.setAttribute("data-tip", "Pretty JSON");
+                        jsonBtn.addEventListener("click", (event) => {
+                          event.stopPropagation();
+                          const prettyNow =
+                            formattedJSON || JSON.stringify(JSON.parse(String(newValue).trim()), null, 2);
+                          MODALS.openJsonModal(key, prettyNow);
+                        });
+                        actionsContainer.appendChild(jsonBtn);
+                      }
+                    } else if (existingJsonBtn) {
+                      existingJsonBtn.remove();
+                    }
+                    cfg.setStatus(`Updated ${key}`);
+                    resolve();
+                  }
+                )
+              );
+            } else {
+              cfg.showLoader(false);
+              cfg.setStatus("Unable to update key: no active tab.");
+            }
+          } catch {
+            cfg.showLoader(false);
+            cfg.setStatus("Failed to update key.");
+          } finally {
+            closeEditor();
+          }
+        });
       });
-    });
+    }
 
     if (!sensitive && !isJSON && typeof value === "string" && value.length > 120) {
       let expanded = false;
@@ -222,7 +224,6 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       toggle.type = "button";
       toggle.textContent = "🔒";
       toggle.className = "icon-btn eye";
-      toggle.title = "Reveal";
       toggle.setAttribute("data-tip", "Reveal value");
       let visible = false;
       toggle.addEventListener("click", (event) => {
@@ -231,7 +232,6 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
         textSpan.classList.remove("json-view");
         textSpan.textContent = visible ? String(value) : ENV.mask(String(value));
         toggle.textContent = visible ? "🔓" : "🔒";
-        toggle.title = visible ? "Hide" : "Reveal";
         toggle.setAttribute("data-tip", visible ? "Hide value" : "Reveal value");
         // Attach/detach JSON prettify on reveal/hide
         const existingJsonBtn = actionsContainer.querySelector(".json-btn");
@@ -241,7 +241,6 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             jsonBtn.type = "button";
             jsonBtn.textContent = "⟦⟧";
             jsonBtn.className = "icon-btn json-btn";
-            jsonBtn.title = "Pretty JSON";
             jsonBtn.setAttribute("data-tip", "Pretty JSON");
             jsonBtn.addEventListener("click", (ev) => {
               ev.stopPropagation();
@@ -263,11 +262,11 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       jsonBtn.type = "button";
       jsonBtn.textContent = "⟦⟧";
       jsonBtn.className = "icon-btn json-btn";
-      jsonBtn.title = "Pretty JSON";
       jsonBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         MODALS.openJsonModal(key, formattedJSON);
       });
+      jsonBtn.setAttribute("data-tip", "Pretty JSON");
       actionsContainer.appendChild(jsonBtn);
     }
   }
@@ -275,6 +274,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
   function renderTable(data, isDiff = false) {
     ensureConfig();
     const { table, tbody, savedList, intellijBtn } = cfg;
+    currentIsDiff = Boolean(isDiff);
     tbody.innerHTML = "";
     cfg.setCurrentView("table");
     if (savedList) savedList.classList.add("hidden");
@@ -342,7 +342,8 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
           valueCell.appendChild(wrap);
           const tag = document.createElement("span");
           tag.className = `diff-tag diff-tag-${diffType || "changed"}`;
-          tag.textContent = diffType === "added" ? "ADD" : diffType === "removed" ? "DEL" : "CHG";
+          const labels = globalThis.SECRETS_SANTA.CONSTANTS.UI.DIFF_LABELS;
+          tag.textContent = diffType === "added" ? labels.ADDED : diffType === "removed" ? labels.REMOVED : labels.CHANGED;
           actionsCell.appendChild(tag);
         } else {
           buildValueActions(key, raw, valueCell, actionsCell);
@@ -373,7 +374,8 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       setCurrentView: options.setCurrentView,
       setIsDiffView: options.setIsDiffView,
       getDiffLeftTitle: options.getDiffLeftTitle,
-      getDiffRightTitle: options.getDiffRightTitle
+      getDiffRightTitle: options.getDiffRightTitle,
+      getCanEdit: options.getCanEdit
     };
   }
 

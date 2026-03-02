@@ -147,7 +147,8 @@ TABLE.setup({
     isDiffView = val;
   },
   getDiffLeftTitle: () => diffLeftTitle,
-  getDiffRightTitle: () => diffRightTitle
+  getDiffRightTitle: () => diffRightTitle,
+  getCanEdit: () => currentDataSource === "page" && !isDiffView
 });
 
 COLLECTIONS.setup({
@@ -284,7 +285,7 @@ function showHostPermissionPrompt(ctx) {
   pendingConsulContext = ctx;
   if (grantPermissionBtn) grantPermissionBtn.classList.remove("hidden");
   setStatus(
-    `Santa asks for permission to fetch your key values in a friendly format! \n🎅🏻 Don't worry this is a READ ONLY extension! 🎅🏻 Ho ho ho!.`
+    `Santa asks for permission to access Consul on this host. Your session token is used only in your browser, and actions run on paths you choose.`
   );
 }
 
@@ -413,11 +414,18 @@ function updateSavedAvailability() {
     const host = ctx?.host || currentHost || "";
     if (!host) {
       loadSavedBtn.disabled = true;
+      // Allow loading even without host to support "any website" requirement
+      // But we need to know if any collections exist at all
+      COLLECTIONS.getAll((collections) => {
+        loadSavedBtn.disabled = !collections || collections.length === 0;
+      });
       return;
     }
     COLLECTIONS.getAll((collections) => {
-      const scoped = (collections || []).filter((c) => (c.host || "") === host);
-      loadSavedBtn.disabled = scoped.length === 0;
+      // If we have a host, prioritize that? Or just show all?
+      // User said "Load Saved should be cliackable on any tab"
+      // So logic: always check if ANY collection exists.
+      loadSavedBtn.disabled = !collections || collections.length === 0;
     });
   });
 }
@@ -615,33 +623,35 @@ loadSavedBtn.addEventListener("click", () => {
   resetUI();
   showLoader(true);
 
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs?.[0];
-    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
-    const host = ctx?.host || currentHost || "";
-    if (!host) {
-      showLoader(false);
-      setStatus("Open a Consul KV page to view host-scoped saved collections.");
+  // We no longer require a Consul tab to load saved collections.
+  getCollections((collections) => {
+    showLoader(false);
+    if (!collections || collections.length === 0) {
+      setStatus("No saved collections found.");
       loadSavedBtn.disabled = true;
       return;
     }
 
-    getCollections((collections) => {
-      showLoader(false);
-      const scoped = (collections || []).filter((c) => (c.host || "") === host);
-      if (scoped.length === 0) {
-        setStatus("No saved collections found for this host.");
-        loadSavedBtn.disabled = true;
-        return;
-      }
-
-      currentHost = host;
-      COLLECTIONS.renderList(scoped);
-      setPostLoadVisible(false);
-      setCompareVisible(true, scoped.length >= 2);
-      loadSavedBtn.disabled = false;
-      setStatus(`Loaded ${scoped.length} collections`);
+    // Group by host
+    const grouped = {};
+    collections.forEach(c => {
+      const h = c.host || "Unknown Host";
+      if (!grouped[h]) grouped[h] = [];
+      grouped[h].push(c);
     });
+
+    COLLECTIONS.renderList(collections, true); // true for "grouped mode"
+    
+    setPostLoadVisible(false);
+    setCompareVisible(true, collections.length >= 2);
+    loadSavedBtn.disabled = false;
+    setStatus(`Loaded ${collections.length} collections`);
+    
+    // Copy Jetbrains button visible but disabled on Load Saved page
+    if (intellijBtn) {
+      intellijBtn.classList.remove("hidden");
+      intellijBtn.disabled = true;
+    }
   });
 });
 
@@ -734,3 +744,118 @@ STORAGE.getDarkMode((isDark) => {
 });
 
 updateSavedAvailability();
+
+// Global tooltip handler
+const globalTooltip = document.getElementById("globalTooltip");
+let tooltipTimeout;
+
+function updateStatusOpaque() {
+  const doc = document.documentElement;
+  const scrollTop = window.pageYOffset || doc.scrollTop || 0;
+  const viewport = window.innerHeight || 0;
+  const height = Math.max(doc.scrollHeight, document.body.scrollHeight);
+  const nearBottom = scrollTop + viewport >= height - 16;
+  if (statusDiv) statusDiv.classList.toggle("status-opaque", nearBottom && scrollTop > 0);
+}
+
+window.addEventListener("scroll", updateStatusOpaque, { passive: true });
+window.addEventListener("resize", updateStatusOpaque);
+updateStatusOpaque();
+function willOverflow(left, top, tipRect, containerRect) {
+  if (left < containerRect.left + 2) return true;
+  if (left + tipRect.width > containerRect.right - 2) return true;
+  if (top < containerRect.top + 2) return true;
+  if (top + tipRect.height > containerRect.bottom - 2) return true;
+  return false;
+}
+
+function computeTooltipPosition(targetRect, tipRect, containerRect) {
+  const offset = 6;
+  let top = targetRect.bottom + offset;
+  let left = targetRect.left + targetRect.width / 2 - tipRect.width / 2;
+  const minLeft = containerRect.left + 4;
+  const maxLeft = containerRect.right - tipRect.width - 4;
+  if (left < minLeft) left = minLeft;
+  if (left > maxLeft) left = maxLeft;
+  if (top + tipRect.height > containerRect.bottom - 4) {
+    top = targetRect.top - tipRect.height - offset;
+  }
+  if (top < containerRect.top + 4) {
+    let tryRightTop = targetRect.top + (targetRect.height - tipRect.height) / 2;
+    let tryRightLeft = targetRect.right + offset;
+    if (willOverflow(tryRightLeft, tryRightTop, tipRect, containerRect)) {
+      let tryLeftLeft = targetRect.left - tipRect.width - offset;
+      if (willOverflow(tryLeftLeft, tryRightTop, tipRect, containerRect)) {
+        top = containerRect.top + 4;
+        left = Math.min(Math.max(left, minLeft), maxLeft);
+      } else {
+        top = tryRightTop;
+        left = tryLeftLeft;
+      }
+    } else {
+      top = tryRightTop;
+      left = tryRightLeft;
+    }
+  } else {
+    const rightEdge = left + tipRect.width;
+    if (rightEdge > containerRect.right - 4) {
+      left = targetRect.right - tipRect.width;
+      if (left < minLeft) left = minLeft;
+    }
+  }
+  return { top, left };
+}
+
+document.body.addEventListener("mouseover", (e) => {
+  const target = e.target.closest("[data-tip]");
+  if (!target) {
+    if (globalTooltip) {
+      globalTooltip.classList.remove("visible");
+      globalTooltip.classList.add("hidden");
+    }
+    return;
+  }
+
+  const tipText = target.getAttribute("data-tip");
+  if (!tipText) return;
+
+  clearTimeout(tooltipTimeout);
+  if (globalTooltip) {
+    globalTooltip.textContent = tipText;
+    const rect = target.getBoundingClientRect();
+    const container = document.querySelector(".container");
+    const containerRect = container
+      ? container.getBoundingClientRect()
+      : { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
+    globalTooltip.classList.remove("hidden");
+    globalTooltip.classList.add("visible");
+    const tooltipRect = globalTooltip.getBoundingClientRect();
+    const pos = computeTooltipPosition(rect, tooltipRect, containerRect);
+    globalTooltip.style.top = `${pos.top}px`;
+    globalTooltip.style.left = `${pos.left}px`;
+    globalTooltip.classList.remove("hidden");
+    globalTooltip.classList.add("visible");
+  }
+});
+
+document.body.addEventListener("mouseout", (e) => {
+  const target = e.target.closest("[data-tip]");
+  if (target && globalTooltip) {
+    globalTooltip.classList.remove("visible");
+    globalTooltip.classList.add("hidden");
+  }
+});
+
+document.body.addEventListener("mousemove", (e) => {
+  const target = e.target.closest("[data-tip]");
+  if (!target || !globalTooltip || !globalTooltip.classList.contains("visible")) return;
+  const rect = target.getBoundingClientRect();
+  const container = document.querySelector(".container");
+  const containerRect = container
+    ? container.getBoundingClientRect()
+    : { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
+  const tooltipRect = globalTooltip.getBoundingClientRect();
+  const pos = computeTooltipPosition(rect, tooltipRect, containerRect);
+  globalTooltip.style.top = `${pos.top}px`;
+  globalTooltip.style.left = `${pos.left}px`;
+});

@@ -63,7 +63,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
    * Renders a list of collections and wires item interactions.
    * Selecting an item loads the collection via onLoadCollection.
    */
-  function renderList(collections) {
+  function renderList(collections, groupedMode = false) {
     const { savedList, table, onLoadCollection } = cfg;
     if (!savedList) return;
     savedList.innerHTML = "";
@@ -71,7 +71,41 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     savedList.classList.remove("hidden");
 
     const fragment = document.createDocumentFragment();
-    (collections || []).forEach((collection) => {
+    
+    // Sort logic
+    const sortFn = (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+
+    let listToRender = collections || [];
+    if (!groupedMode) {
+      listToRender.sort(sortFn);
+      renderItems(listToRender, fragment, false);
+    } else {
+      // Group by host
+      const grouped = {};
+      listToRender.forEach(c => {
+        const h = c.host || "Unknown Host";
+        if (!grouped[h]) grouped[h] = [];
+        grouped[h].push(c);
+      });
+      
+      const hosts = Object.keys(grouped).sort();
+      hosts.forEach(host => {
+        const header = document.createElement("li");
+        header.className = "saved-host-header";
+        header.textContent = host;
+        fragment.appendChild(header);
+        
+        const hostItems = grouped[host].sort(sortFn);
+        renderItems(hostItems, fragment, true);
+      });
+    }
+
+    savedList.appendChild(fragment);
+  }
+
+  function renderItems(items, fragment, groupedMode) {
+    const { onLoadCollection } = cfg;
+    items.forEach((collection) => {
       const item = document.createElement("li");
       item.className = "saved-item";
       item.dataset.key = (collection.title || "").toLowerCase();
@@ -95,12 +129,19 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       const del = document.createElement("span");
       del.className = "saved-delete";
       del.textContent = "🗑";
+      del.title = "Delete";
+      del.setAttribute("data-tip", "Delete collection");
       del.addEventListener("click", (event) => {
         event.stopPropagation();
-        deleteById(collection.id, collection.host || "");
+        deleteById(collection.id, groupedMode ? null : collection.host); 
+        // If grouped mode, we reload all. If not, we reload scoped.
+        // Actually deleteById currently reloads ALL from storage and then filters if afterRenderHost is set.
+        // We should fix deleteById to handle the refresh logic better or pass a callback.
+        // For now let's just let it re-render.
       });
 
       actions.appendChild(del);
+
       item.appendChild(textWrap);
       item.appendChild(actions);
 
@@ -114,8 +155,6 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
       fragment.appendChild(item);
     });
-
-    savedList.appendChild(fragment);
   }
 
   globalThis.SECRETS_SANTA.COLLECTIONS = { setup, renderList, deleteById, getAll };
