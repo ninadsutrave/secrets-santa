@@ -749,6 +749,51 @@ updateSavedAvailability();
 const globalTooltip = document.getElementById("globalTooltip");
 let tooltipTimeout;
 
+function willOverflow(left, top, tipRect, containerRect) {
+  if (left < containerRect.left + 2) return true;
+  if (left + tipRect.width > containerRect.right - 2) return true;
+  if (top < containerRect.top + 2) return true;
+  if (top + tipRect.height > containerRect.bottom - 2) return true;
+  return false;
+}
+
+function computeTooltipPosition(targetRect, tipRect, containerRect) {
+  const offset = 6;
+  let top = targetRect.bottom + offset;
+  let left = targetRect.left + targetRect.width / 2 - tipRect.width / 2;
+  const minLeft = containerRect.left + 4;
+  const maxLeft = containerRect.right - tipRect.width - 4;
+  if (left < minLeft) left = minLeft;
+  if (left > maxLeft) left = maxLeft;
+  if (top + tipRect.height > containerRect.bottom - 4) {
+    top = targetRect.top - tipRect.height - offset;
+  }
+  if (top < containerRect.top + 4) {
+    let tryRightTop = targetRect.top + (targetRect.height - tipRect.height) / 2;
+    let tryRightLeft = targetRect.right + offset;
+    if (willOverflow(tryRightLeft, tryRightTop, tipRect, containerRect)) {
+      let tryLeftLeft = targetRect.left - tipRect.width - offset;
+      if (willOverflow(tryLeftLeft, tryRightTop, tipRect, containerRect)) {
+        top = containerRect.top + 4;
+        left = Math.min(Math.max(left, minLeft), maxLeft);
+      } else {
+        top = tryRightTop;
+        left = tryLeftLeft;
+      }
+    } else {
+      top = tryRightTop;
+      left = tryRightLeft;
+    }
+  } else {
+    const rightEdge = left + tipRect.width;
+    if (rightEdge > containerRect.right - 4) {
+      left = targetRect.right - tipRect.width;
+      if (left < minLeft) left = minLeft;
+    }
+  }
+  return { top, left };
+}
+
 document.body.addEventListener("mouseover", (e) => {
   const target = e.target.closest("[data-tip]");
   if (!target) {
@@ -766,30 +811,16 @@ document.body.addEventListener("mouseover", (e) => {
   if (globalTooltip) {
     globalTooltip.textContent = tipText;
     const rect = target.getBoundingClientRect();
-    const tooltipRect = globalTooltip.getBoundingClientRect();
     const container = document.querySelector(".container");
     const containerRect = container
       ? container.getBoundingClientRect()
       : { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
-
-    let top = rect.bottom + 6;
-    let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
-
-    const minLeft = containerRect.left + 4;
-    const maxLeft = containerRect.right - tooltipRect.width - 4;
-    if (left < minLeft) left = minLeft;
-    if (left > maxLeft) left = maxLeft;
-
-    const maxBottom = containerRect.bottom - 4;
-    if (top + tooltipRect.height > maxBottom) {
-      top = rect.top - tooltipRect.height - 6;
-      if (top < containerRect.top + 4) {
-        top = containerRect.top + 4;
-      }
-    }
-
-    globalTooltip.style.top = `${top}px`;
-    globalTooltip.style.left = `${left}px`;
+    globalTooltip.classList.remove("hidden");
+    globalTooltip.classList.add("visible");
+    const tooltipRect = globalTooltip.getBoundingClientRect();
+    const pos = computeTooltipPosition(rect, tooltipRect, containerRect);
+    globalTooltip.style.top = `${pos.top}px`;
+    globalTooltip.style.left = `${pos.left}px`;
     globalTooltip.classList.remove("hidden");
     globalTooltip.classList.add("visible");
   }
@@ -801,4 +832,18 @@ document.body.addEventListener("mouseout", (e) => {
     globalTooltip.classList.remove("visible");
     globalTooltip.classList.add("hidden");
   }
+});
+
+document.body.addEventListener("mousemove", (e) => {
+  const target = e.target.closest("[data-tip]");
+  if (!target || !globalTooltip || !globalTooltip.classList.contains("visible")) return;
+  const rect = target.getBoundingClientRect();
+  const container = document.querySelector(".container");
+  const containerRect = container
+    ? container.getBoundingClientRect()
+    : { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
+  const tooltipRect = globalTooltip.getBoundingClientRect();
+  const pos = computeTooltipPosition(rect, tooltipRect, containerRect);
+  globalTooltip.style.top = `${pos.top}px`;
+  globalTooltip.style.left = `${pos.left}px`;
 });
