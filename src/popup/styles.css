@@ -330,7 +330,7 @@ td:nth-child(1) {
 
 th:nth-child(3),
 td:nth-child(3) {
-  width: 112px;
+  width: 152px;
   white-space: nowrap;
   text-align: right;
 }

@@ -30,6 +30,65 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     return false;
   }
 
+  function getPrettyJSON(value) {
+    try {
+      let str = String(value || "");
+      let trimmed = str.trim();
+      if (!trimmed) return "";
+      if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        try {
+          const inner = JSON.parse(trimmed);
+          trimmed = String(inner || "").trim();
+        } catch {
+          return "";
+        }
+      }
+      let startObj = trimmed.indexOf("{");
+      let startArr = trimmed.indexOf("[");
+      let start = -1;
+      if (startObj !== -1 && startArr !== -1) start = Math.min(startObj, startArr);
+      else start = startObj !== -1 ? startObj : startArr;
+      if (start === -1) return "";
+      // Extract the first valid JSON segment using bracket matching
+      let depth = 0;
+      let inString = false;
+      let stringQuote = "";
+      let prevEscaped = false;
+      const openChar = trimmed[start];
+      const closeChar = openChar === "{" ? "}" : "]";
+      for (let i = start; i < trimmed.length; i += 1) {
+        const ch = trimmed[i];
+        if (inString) {
+          if (ch === "\\" && !prevEscaped) {
+            prevEscaped = true;
+          } else {
+            if (ch === stringQuote && !prevEscaped) inString = false;
+            prevEscaped = false;
+          }
+          continue;
+        }
+        if (ch === "\"" || ch === "'") {
+          inString = true;
+          stringQuote = ch;
+          prevEscaped = false;
+          continue;
+        }
+        if (ch === openChar) depth += 1;
+        else if (ch === closeChar) {
+          depth -= 1;
+          if (depth === 0) {
+            const segment = trimmed.slice(start, i + 1);
+            const parsed = JSON.parse(segment);
+            return JSON.stringify(parsed, null, 2);
+          }
+        }
+      }
+      return "";
+    } catch {
+      return "";
+    }
+  }
+
   function formatEnvValue(value) {
     if (value === null || value === undefined) return "";
     const str = String(value);
@@ -125,6 +184,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     mask,
     parseDotEnv,
     parseJetBrainsPairs,
-    isLikelyJSON
+    isLikelyJSON,
+    getPrettyJSON
   };
 })();

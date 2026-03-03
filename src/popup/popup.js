@@ -583,37 +583,26 @@ saveBtn.addEventListener("click", () => {
     setStatus("Load secrets from a Consul page first.");
     return;
   }
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs?.[0];
-    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
-    const host = currentHost || ctx?.host || "";
-    if (!host) {
-      setStatus("Open a Consul KV page to save a host-scoped collection.");
-      return;
+  let host = currentHost || "";
+  if (!host) host = "Unknown Host";
+  getCollections((collections) => {
+    const title = currentPrefix;
+    const matches = (collections || []).filter((c) => (c.title || "") === title && (c.host || "") === host);
+    const now = Date.now();
+    let next = [];
+    if (matches.length === 0) {
+      const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(now);
+      const collection = { id, host, title, createdAt: now, updatedAt: now, keys: currentSecrets };
+      next = [...collections, collection];
+    } else {
+      const keep = matches.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0];
+      next = (collections || [])
+        .filter((c) => (c.id || "") !== (keep.id || ""))
+        .concat([{ ...keep, host, title, updatedAt: now, keys: currentSecrets }]);
     }
-
-    getCollections((collections) => {
-      const title = currentPrefix;
-      const matches = (collections || []).filter((c) => (c.title || "") === title && (c.host || "") === host);
-      const now = Date.now();
-
-      let next = [];
-
-      if (matches.length === 0) {
-        const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(now);
-        const collection = { id, host, title, createdAt: now, updatedAt: now, keys: currentSecrets };
-        next = [...collections, collection];
-      } else {
-        const keep = matches.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0];
-        next = (collections || [])
-          .filter((c) => (c.id || "") !== (keep.id || ""))
-          .concat([{ ...keep, host, title, updatedAt: now, keys: currentSecrets }]);
-      }
-
-      STORAGE.setCollections(next, () => {
-        setStatus("Collection saved.");
-        updateSavedAvailability();
-      });
+    STORAGE.setCollections(next, () => {
+      setStatus("Collection saved.");
+      updateSavedAvailability();
     });
   });
 });

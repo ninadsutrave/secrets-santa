@@ -92,27 +92,16 @@ async function buildCss() {
 }
 
 async function buildPopupBundle() {
-  const order = [
-    // shared first so modules and popup can access CONSTANTS/STORAGE
-    path.join(src.shared, "constants.js"),
-    path.join(src.shared, "storage.js"),
-    path.join(src.popupModules, "env-utils.js"),
-    path.join(src.popupModules, "modals.js"),
-    path.join(src.popupModules, "table.js"),
-    path.join(src.popupModules, "token.js"),
-    path.join(src.popupModules, "collections.js"),
-    path.join(src.popupModules, "compare.js"),
-    path.join(src.popupModules, "upload.js"),
-    src.popupJs
-  ];
-  let combined = "";
-  for (const p of order) {
-    const code = await fs.readFile(p, "utf8");
-    combined += `\n${code}\n`;
-  }
-  const result = await esbuild.transform(combined, { loader: "js", minify: true, target: "chrome116" });
+  // Use esbuild bundler to preserve module order via modules/index.js
   await ensureDir(path.dirname(dist.popupJs));
-  await fs.writeFile(dist.popupJs, result.code, "utf8");
+  await esbuild.build({
+    entryPoints: [path.join(src.popupModules, "index.js")],
+    bundle: true,
+    minify: true,
+    target: "chrome116",
+    format: "iife",
+    outfile: dist.popupJs
+  });
 }
 
 async function buildBackgroundBundle() {
