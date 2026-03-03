@@ -177,6 +177,8 @@ COLLECTIONS.setup({
 
 COMPARE.setup({
   savedList,
+  table,
+  intellijBtn,
   setStatus,
   setPostLoadVisible,
   setCompareVisible,
@@ -193,7 +195,10 @@ COMPARE.setup({
   },
   getDiffLeftTitle: () => diffLeftTitle,
   getDiffRightTitle: () => diffRightTitle,
-  TABLE
+  TABLE,
+  setPickerOpen: (open) => {
+    comparePickerOpen = Boolean(open);
+  }
 });
 
 UPLOAD.setup({
@@ -741,10 +746,7 @@ let tooltipTimeout;
 function updateStatusOpaque() {
   const doc = document.documentElement;
   const scrollTop = window.pageYOffset || doc.scrollTop || 0;
-  const viewport = window.innerHeight || 0;
-  const height = Math.max(doc.scrollHeight, document.body.scrollHeight);
-  const nearBottom = scrollTop + viewport >= height - 16;
-  if (statusDiv) statusDiv.classList.toggle("status-opaque", nearBottom && scrollTop > 0);
+  if (statusDiv) statusDiv.classList.toggle("status-opaque", scrollTop > 0);
 }
 
 window.addEventListener("scroll", updateStatusOpaque, { passive: true });

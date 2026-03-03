@@ -21,6 +21,8 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
   function setup(options) {
     cfg = {
       savedList: options.savedList,
+      table: options.table,
+      intellijBtn: options.intellijBtn,
       setStatus: options.setStatus,
       setPostLoadVisible: options.setPostLoadVisible,
       setCompareVisible: options.setCompareVisible,
@@ -30,7 +32,8 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       setDiffTitles: options.setDiffTitles,
       getDiffLeftTitle: options.getDiffLeftTitle,
       getDiffRightTitle: options.getDiffRightTitle,
-      TABLE: options.TABLE
+      TABLE: options.TABLE,
+      setPickerOpen: options.setPickerOpen
     };
   }
 
@@ -60,11 +63,16 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
    * Renders the picker UI to choose two collections (A then B) and shows the diff.
    */
   function renderPicker(collections, getSelectedIds, setSelectedIds) {
-    const { savedList, TABLE } = cfg;
+    const { savedList, TABLE, table, intellijBtn } = cfg;
     if (!savedList) return;
     savedList.innerHTML = "";
     cfg.setCurrentView("list");
     savedList.classList.remove("hidden");
+    if (table) table.classList.add("hidden");
+    if (intellijBtn) {
+      intellijBtn.classList.remove("hidden");
+      intellijBtn.disabled = true;
+    }
 
     const fragment = document.createDocumentFragment();
     const selected = getSelectedIds();
@@ -161,24 +169,9 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     button.addEventListener("click", () => {
       if (state.pickerOpen) {
         state.pickerOpen = false;
+        try { cfg.setPickerOpen(false); } catch {}
         state.selectedIds = [];
         cfg.setCompareVisible(true, true);
-        if (deps.getCurrentView() === "list") {
-          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            const tab = tabs?.[0];
-            const ctx = tab?.url ? deps.parseConsulContext(tab.url) : null;
-            const host = ctx?.host || deps.getCurrentHost() || "";
-            deps.getCollections((collections) => {
-              const scoped = host ? (collections || []).filter((c) => (c.host || "") === host) : [];
-              deps.renderScopedList(host, scoped);
-              cfg.setPostLoadVisible(false);
-              cfg.setCompareVisible(true, scoped.length >= 2);
-              cfg.showSearch();
-              cfg.setStatus(`Loaded ${scoped.length} collections`);
-            });
-          });
-          return;
-        }
         cfg.setIsDiffView(false);
         cfg.TABLE.renderTable(deps.getCurrentSecrets(), false);
         cfg.setPostLoadVisible(true);
@@ -206,6 +199,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
           }
           deps.setCurrentHost(host);
           state.pickerOpen = true;
+           try { cfg.setPickerOpen(true); } catch {}
           state.selectedIds = [];
           cfg.setPostLoadVisible(false);
           cfg.setCompareVisible(true, true);
