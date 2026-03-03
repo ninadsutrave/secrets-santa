@@ -13,6 +13,7 @@ importScripts(
 const { CONSTANTS, STORAGE, CONSUL } = globalThis.SECRETS_SANTA;
 
 const cachedTokens = {};
+const rejectedTokensByHost = {};
 
 /* Persists the latest X-Consul-Token so popup requests can reuse it. */
 function updateToken(token, host) {
@@ -29,6 +30,7 @@ function clearToken(host) {
   if (!h) return;
   delete cachedTokens[h];
   STORAGE.clearTokenForHost(h);
+  if (rejectedTokensByHost[h]) delete rejectedTokensByHost[h];
 }
 
 function isAclNotFound(errorText) {
@@ -37,6 +39,27 @@ function isAclNotFound(errorText) {
 
 function isPermissionDenied(errorText) {
   return String(errorText || "").toLowerCase().includes("permission denied");
+}
+
+async function validateToken(host, token) {
+  try {
+    const h = String(host || "");
+    const t = String(token || "");
+    if (!h || !t) return false;
+    const doCheck = async (scheme) => {
+      const url = `${scheme}://${h}/v1/acl/token/self`;
+      const res = await fetch(url, {
+        method: "GET",
+        credentials: "include",
+        headers: { [CONSTANTS.HEADERS.CONSUL_TOKEN_REQUEST]: t }
+      });
+      return res.ok;
+    };
+    if (await doCheck("https")) return true;
+    return await doCheck("http");
+  } catch {
+    return false;
+  }
 }
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
@@ -52,7 +75,23 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     if (tokenHeader?.value) {
       try {
         const host = new URL(details.url).host;
-        updateToken(tokenHeader.value, host);
+        const candidate = String(tokenHeader.value || "");
+        const h = String(host || "").toLowerCase();
+        const rejected = (rejectedTokensByHost[h] && rejectedTokensByHost[h].has(candidate));
+        if (rejected) return;
+        validateToken(host, candidate)
+          .then((valid) => {
+            if (valid) {
+              updateToken(candidate, host);
+            } else {
+              if (cachedTokens[h] && cachedTokens[h] === candidate) {
+                clearToken(h);
+              }
+              if (!rejectedTokensByHost[h]) rejectedTokensByHost[h] = new Set();
+              rejectedTokensByHost[h].add(candidate);
+            }
+          })
+          .catch(() => {});
       } catch {}
     }
   },
@@ -201,6 +240,8 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
       }
       if ((res.status === 401 || res.status === 403) && isAclNotFound(errorText)) {
         clearToken(host);
+      } else if ((res.status === 401 || res.status === 403) && isPermissionDenied(errorText)) {
+        clearToken(host);
       }
       return { ok: false, status: res.status, errorText };
     }
@@ -287,7 +328,11 @@ async function putKeyValue({ scheme, host, dc, fullKey, token, value }) {
 async function applyEnv({ scheme, host, dc, prefix, entries }) {
   const p = String(prefix || "");
   const token = await getActiveToken(host);
-  if (token) updateToken(token, host);
+  if (token) {
+    const valid = await validateToken(host, token);
+    if (valid) updateToken(token, host);
+    else clearToken(host);
+  }
 
   const pairs = Array.isArray(entries) ? entries : [];
   const cleaned = pairs
@@ -334,7 +379,11 @@ async function applyEnv({ scheme, host, dc, prefix, entries }) {
 async function fetchVisibleValues({ scheme, host, dc, prefix, keys }) {
   const p = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
   const token = await getActiveToken(host);
-  if (token) updateToken(token, host);
+  if (token) {
+    const valid = await validateToken(host, token);
+    if (valid) updateToken(token, host);
+    else clearToken(host);
+  }
 
   if (!Array.isArray(keys) || keys.length === 0) {
     return { keys: {}, prefix: `/${p.replace(/\/$/, "")}`, failed: 0, skipped: 0 };
@@ -418,8 +467,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === CONSTANTS.MESSAGE_TYPES.SET_TOKEN) {
     const token = String(message?.token || "");
     const host = String(message?.host || "");
-    if (token && host) updateToken(token, host);
-    sendResponse({ ok: Boolean(token) });
+    if (token && host) {
+      const h = String(host || "").toLowerCase();
+      const rejected = (rejectedTokensByHost[h] && rejectedTokensByHost[h].has(token));
+      if (rejected) {
+        sendResponse({ ok: false, error: "Rejected invalid Consul token." });
+        return;
+      }
+      validateToken(host, token)
+        .then((valid) => {
+          if (valid) {
+            updateToken(token, host);
+            sendResponse({ ok: true });
+          } else {
+            sendResponse({ ok: false, error: "Rejected invalid Consul token." });
+            if (!rejectedTokensByHost[h]) rejectedTokensByHost[h] = new Set();
+            rejectedTokensByHost[h].add(token);
+          }
+        })
+        .catch(() => sendResponse({ ok: false, error: "Failed to validate token." }));
+      return true;
+    }
+    sendResponse({ ok: false });
     return;
   }
 
@@ -431,10 +500,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === CONSTANTS.MESSAGE_TYPES.FETCH_KEYS) {
-    getActiveToken(message?.host)
-      .then((token) => {
-        if (token && message?.host) updateToken(token, message.host);
-        sendResponse({ token: token || "" });
+    const host = String(message?.host || "");
+    getActiveToken(host)
+      .then(async (token) => {
+        const t = String(token || "");
+        if (!t || !host) {
+          sendResponse({ token: "" });
+          return;
+        }
+        const h = String(host || "").toLowerCase();
+        const rejected = (rejectedTokensByHost[h] && rejectedTokensByHost[h].has(t));
+        const valid = rejected ? false : await validateToken(host, t);
+        if (valid) {
+          updateToken(t, host);
+          sendResponse({ token: t });
+        } else {
+          clearToken(host);
+          if (t) {
+            if (!rejectedTokensByHost[h]) rejectedTokensByHost[h] = new Set();
+            rejectedTokensByHost[h].add(t);
+          }
+          sendResponse({ token: "" });
+        }
       })
       .catch(() => sendResponse({ error: "Failed to fetch keys." }));
     return true;

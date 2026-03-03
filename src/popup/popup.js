@@ -473,7 +473,10 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
         const shouldRetry =
           attempt === 0 &&
           tabId &&
-          (message.toLowerCase().includes("acl not found") || message.toLowerCase().includes("no consul token captured"));
+          (lower.includes("acl not found") ||
+            lower.includes("no consul token captured") ||
+            lower.includes("permission denied") ||
+            lower.includes("access"));
         if (shouldRetry) {
           showLoader(true);
           setStatus("Refreshing Consul session…");
@@ -548,7 +551,12 @@ loadBtn.addEventListener("click", async () => {
   }
 
   hideHostPermissionPrompt();
-  await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+  const token = await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+  if (!token) {
+    showLoader(false);
+    setStatus("Refreshing Consul session… Please interact with the Consul UI and try again.");
+    return;
+  }
   loadSecretsForContext(ctx, tab.id);
 });
 
@@ -568,8 +576,18 @@ grantPermissionBtn.addEventListener("click", async () => {
   hideHostPermissionPrompt();
   showLoader(true);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id) await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
-  loadSecretsForContext(ctx, tab?.id);
+  if (tab?.id) {
+    const token = await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+    if (!token) {
+      showLoader(false);
+      setStatus("Refreshing Consul session… Please interact with the Consul UI and try again.");
+      return;
+    }
+    loadSecretsForContext(ctx, tab.id);
+  } else {
+    showLoader(false);
+    setStatus("Unable to read current tab.");
+  }
 });
 
 /* upload wiring delegated to upload.js */
