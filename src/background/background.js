@@ -46,6 +46,8 @@ async function validateToken(host, token) {
     const h = String(host || "");
     const t = String(token || "");
     if (!h || !t) return false;
+    const domainLike = /^[a-z0-9.-]+(:\d+)?$/i;
+    if (!domainLike.test(h)) return false;
     const doCheck = async (scheme) => {
       const url = `${scheme}://${h}/v1/acl/token/self`;
       const res = await fetch(url, {

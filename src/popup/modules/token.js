@@ -15,6 +15,9 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
   async function validateTokenOnTab(tabId, dc, token) {
     try {
+      if (!chrome.scripting || !chrome.scripting.executeScript) {
+        return false;
+      }
       const results = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
@@ -120,15 +123,28 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       });
       const token = String(results?.[0]?.result || "");
       if (!token) return "";
-      const valid = await validateTokenOnTab(tabId, dc, token);
-      if (!valid) return "";
-      globalThis.SECRETS_SANTA.STORAGE.setTokenForHost(host, token);
-      await new Promise((resolve) =>
-        chrome.runtime.sendMessage({ type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host }, () =>
-          resolve()
+      const validOnTab = await validateTokenOnTab(tabId, dc, token);
+      if (validOnTab) {
+        globalThis.SECRETS_SANTA.STORAGE.setTokenForHost(host, token);
+        await new Promise((resolve) =>
+          chrome.runtime.sendMessage({ type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host }, () =>
+            resolve()
+          )
+        );
+        return token;
+      }
+      // Fallback: ask background to validate and store
+      const ok = await new Promise((resolve) =>
+        chrome.runtime.sendMessage(
+          { type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host },
+          (resp) => resolve(Boolean(resp?.ok))
         )
       );
-      return token;
+      if (ok) {
+        globalThis.SECRETS_SANTA.STORAGE.setTokenForHost(host, token);
+        return token;
+      }
+      return "";
     } catch {
       return "";
     }
