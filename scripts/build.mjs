@@ -138,15 +138,19 @@ async function writeManifest(dist, target) {
   const raw = await fs.readFile(src.manifest, "utf8");
   const m = JSON.parse(raw);
   if (target === "firefox") {
+    const author =
+      typeof m.author === "string"
+        ? m.author
+        : [m?.author?.name, m?.author?.email].filter(Boolean).join(" ");
     const ff = {
       manifest_version: m.manifest_version,
       name: m.name,
       description: m.description,
       homepage_url: m.homepage_url,
-      author: m.author,
+      author,
       version: m.version,
       icons: m.icons,
-      background: { ...(m.background || {}), service_worker: "background.js" },
+      background: { scripts: ["background.js"] },
       action: { ...(m.action || {}), default_popup: "popup.html" },
       permissions: m.permissions,
       host_permissions: Array.isArray(m.host_permissions)
