@@ -73,6 +73,37 @@ Screenshots of the extension in action:
 
 Add images in this section once available (e.g. `docs/screenshots/01-popup.png`, `docs/screenshots/02-table.png`, etc.).
 
+## 🧱 Build & Package (dist/)
+
+Generate a clean, minified `dist/` folder with one JS per context:
+
+1. Install tooling
+   ```bash
+   npm install
+   ```
+2. Build bundled dist
+   ```bash
+   npm run build
+   ```
+   Produces:
+   - dist/popup.html (rewritten to one script)
+   - dist/popup.js (single bundled, minified popup script)
+   - dist/background.js (single bundled, minified service worker)
+   - dist/styles.css
+   - dist/assets/* (copied from assets/)
+   - dist/manifest.json (based on root manifest, with corrected entry paths)
+
+3. Zip the `dist/` folder
+   ```bash
+   npm run zip
+   ```
+   Creates SecretsSanta-dist.zip at project root.
+
+4. Notes
+   - Shortcut: set Cmd+Shift+S (mac) or Ctrl+Shift+S (Windows/Linux) in chrome://extensions/shortcuts for “Open SecretsSanta”.
+   - Permissions and optional host permissions are taken directly from the root manifest.json.
+   - Ensure icons exist under `assets/` and paths in `manifest.json` point to them.
+
 ## 🛠️ Development & Contribution
 
 We welcome contributions! This project is open source.

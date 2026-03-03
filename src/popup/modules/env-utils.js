@@ -3,15 +3,31 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 (() => {
   function isLikelyJSON(value) {
     if (typeof value !== "string") return false;
-    const trimmed = value.trim();
+    let trimmed = value.trim();
     if (!trimmed) return false;
-    if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return false;
-    try {
-      const parsed = JSON.parse(trimmed);
-      return parsed !== null && typeof parsed === "object";
-    } catch {
-      return false;
+    // Direct object/array
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return parsed !== null && typeof parsed === "object";
+      } catch {
+        return false;
+      }
     }
+    // Quoted JSON (string containing JSON)
+    if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      try {
+        const inner = JSON.parse(trimmed);
+        const innerTrim = String(inner || "").trim();
+        if (!innerTrim) return false;
+        if (!(innerTrim.startsWith("{") || innerTrim.startsWith("["))) return false;
+        const parsed = JSON.parse(innerTrim);
+        return parsed !== null && typeof parsed === "object";
+      } catch {
+        return false;
+      }
+    }
+    return false;
   }
 
   function formatEnvValue(value) {

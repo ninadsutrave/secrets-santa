@@ -4,11 +4,10 @@
   "private": true,
   "description": "Consul KV companion extension",
   "scripts": {
-    "build:popup": "webpack --mode production",
-    "dev:popup": "webpack --mode development --watch"
+    "build": "node scripts/build.mjs",
+    "zip": "npm run build && cd dist && zip -r ../SecretsSanta-dist.zip ."
   },
   "devDependencies": {
-    "webpack": "^5.91.0",
-    "webpack-cli": "^5.1.4"
+    "esbuild": "^0.19.12"
   }
 }

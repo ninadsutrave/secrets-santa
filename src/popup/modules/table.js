@@ -230,12 +230,12 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
         event.stopPropagation();
         visible = !visible;
         textSpan.classList.remove("json-view");
-        textSpan.textContent = visible ? String(value) : ENV.mask(String(value));
+        const raw = String(value);
+        textSpan.textContent = visible ? raw : ENV.mask(raw);
         toggle.textContent = visible ? "🔓" : "🔒";
         toggle.setAttribute("data-tip", visible ? "Hide value" : "Reveal value");
-        // Attach/detach JSON prettify on reveal/hide
         const existingJsonBtn = actionsContainer.querySelector(".json-btn");
-        if (visible && ENV.isLikelyJSON(String(value))) {
+        if (visible && ENV.isLikelyJSON(raw.trim())) {
           if (!existingJsonBtn) {
             const jsonBtn = document.createElement("button");
             jsonBtn.type = "button";
@@ -244,7 +244,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             jsonBtn.setAttribute("data-tip", "Pretty JSON");
             jsonBtn.addEventListener("click", (ev) => {
               ev.stopPropagation();
-              const prettyNow = JSON.stringify(JSON.parse(String(value).trim()), null, 2);
+              const prettyNow = JSON.stringify(JSON.parse(raw.trim()), null, 2);
               MODALS.openJsonModal(key, prettyNow);
             });
             actionsContainer.appendChild(jsonBtn);
