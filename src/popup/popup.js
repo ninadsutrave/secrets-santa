@@ -351,7 +351,8 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
     (response) => {
       showLoader(false);
       if (chrome.runtime.lastError || !response) {
-        setStatus("Santa says please refresh and come back.");
+        const err = chrome.runtime.lastError?.message || "Internal communication failed.";
+        setStatus(`Santa says please refresh and come back. (${err})`);
         return;
       }
       if (response.error) {
