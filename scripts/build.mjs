@@ -35,7 +35,7 @@ function distPaths(target) {
 async function rimraf(p) {
   try {
     await fs.rm(p, { recursive: true, force: true });
-  } catch {}
+  } catch { }
 }
 
 async function ensureDir(p) {
@@ -125,7 +125,11 @@ async function buildBackgroundBundle(dist, target) {
     }
     combined += `\n${code}\n`;
   }
-  const result = await esbuild.transform(combined, { loader: "js", minify: true, target: target === "firefox" ? "firefox115" : "chrome116" });
+  const result = await esbuild.transform(combined, {
+    loader: "js",
+    minify: target !== "firefox", // Firefox background can be sensitive to minification
+    target: target === "firefox" ? "firefox128" : "chrome116"
+  });
   await fs.writeFile(dist.background, result.code, "utf8");
 }
 
@@ -138,39 +142,27 @@ async function writePopupHtml(dist) {
 async function writeManifest(dist, target) {
   const raw = await fs.readFile(src.manifest, "utf8");
   const m = JSON.parse(raw);
+
   if (target === "firefox") {
-    const author =
-      typeof m.author === "string"
-        ? m.author
-        : [m?.author?.name, m?.author?.email].filter(Boolean).join(" ");
+    const author = typeof m.author === "string"
+      ? m.author
+      : [m?.author?.name, m?.author?.email].filter(Boolean).join(" ");
+
+    // Firefox MV3 can use optional_host_permissions just like Chrome
     const ff = {
-      manifest_version: m.manifest_version,
-      name: m.name,
-      description: m.description,
-      homepage_url: m.homepage_url,
+      ...m,
       author,
-      version: m.version,
-      icons: m.icons,
-      background: { scripts: ["background.js"] },
-      action: { ...(m.action || {}), default_popup: "popup.html" },
-      permissions: m.permissions,
-      host_permissions: Array.isArray(m.host_permissions)
-        ? m.host_permissions
-        : Array.isArray(m.optional_host_permissions)
-        ? m.optional_host_permissions
-        : ["https://*/*", "http://*/*"],
+      background: {
+        scripts: ["background.js"]
+      },
+      action: {
+        ...(m.action || {}),
+        default_popup: "popup.html"
+      },
       browser_specific_settings: {
         gecko: {
           id: "secretssanta@ninadsutrave",
-          // Omit id for AMO; add one when self-hosting if needed
-          strict_min_version: "140.0",
-          data_collection_permissions: {
-            required: ["websiteContent"],
-            optional: []
-          }
-        },
-        gecko_android: {
-          strict_min_version: "142.0"
+          strict_min_version: "128.0"
         }
       },
       content_scripts: [
@@ -181,6 +173,7 @@ async function writeManifest(dist, target) {
         }
       ]
     };
+
     await fs.writeFile(dist.manifest, JSON.stringify(ff, null, 2), "utf8");
   } else {
     const distManifest = {
@@ -198,7 +191,7 @@ async function buildTarget(target) {
   await ensureDir(dist.root);
   await ensureDir(dist.assets);
   await ensureDir(dist.content);
-  await copyDir(src.assets, dist.assets).catch(() => {});
+  await copyDir(src.assets, dist.assets).catch(() => { });
   await buildCss(dist);
   await buildPopupBundle(dist, target);
   await buildBackgroundBundle(dist, target);
@@ -206,7 +199,7 @@ async function buildTarget(target) {
   await writeManifest(dist, target);
   if (target === "firefox") {
     // copy content script
-    await fs.copyFile(path.join(root, "src/content/consul-token-bridge.js"), path.join(dist.content, "consul-token-bridge.js")).catch(() => {});
+    await fs.copyFile(path.join(root, "src/content/consul-token-bridge.js"), path.join(dist.content, "consul-token-bridge.js")).catch(() => { });
   }
   console.log(`Dist built at: ${dist.root}`);
 }
