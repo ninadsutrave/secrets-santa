@@ -162,11 +162,14 @@ async function writeManifest(dist, target) {
       browser_specific_settings: {
         gecko: {
           id: "secretssanta@ninadsutrave",
-          strict_min_version: "128.0",
+          strict_min_version: "140.0",
           data_collection_permissions: {
             required: ["websiteContent"],
             optional: []
           }
+        },
+        gecko_android: {
+          strict_min_version: "142.0"
         }
       },
       content_scripts: [

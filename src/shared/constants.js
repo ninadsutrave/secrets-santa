@@ -36,7 +36,7 @@ globalThis.SECRETS_SANTA.CONSTANTS = {
   },
   LINKS: {
     CHROME_WEBSTORE: "https://chromewebstore.google.com/detail/secretssanta/mfppamekfnjjnpgfpjhdgomnpobadhfe",
-    FIREFOX_ADDON: "https://addons.mozilla.org/en-GB/firefox/addon/secretssanta",
+    FIREFOX_ADDON: "https://addons.mozilla.org/en-GB/firefox/addon/secretssanta-consul-kv-manager",
     EDGE_ADDONS: "https://microsoftedge.microsoft.com/addons/detail/0RDCKD68RF3N"
   }
 };
