@@ -15,6 +15,9 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
   async function validateTokenOnTab(tabId, dc, token) {
     try {
+      if (!chrome.scripting || !chrome.scripting.executeScript) {
+        return false;
+      }
       const results = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
@@ -120,15 +123,28 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       });
       const token = String(results?.[0]?.result || "");
       if (!token) return "";
-      const valid = await validateTokenOnTab(tabId, dc, token);
-      if (!valid) return "";
-      globalThis.SECRETS_SANTA.STORAGE.setTokenForHost(host, token);
-      await new Promise((resolve) =>
-        chrome.runtime.sendMessage({ type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host }, () =>
-          resolve()
+      const validOnTab = await validateTokenOnTab(tabId, dc, token);
+      if (validOnTab) {
+        globalThis.SECRETS_SANTA.STORAGE.setTokenForHost(host, token);
+        await new Promise((resolve) =>
+          chrome.runtime.sendMessage({ type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host }, () =>
+            resolve()
+          )
+        );
+        return token;
+      }
+      // Fallback: ask background to validate and store
+      const ok = await new Promise((resolve) =>
+        chrome.runtime.sendMessage(
+          { type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host },
+          (resp) => resolve(Boolean(resp?.ok))
         )
       );
-      return token;
+      if (ok) {
+        globalThis.SECRETS_SANTA.STORAGE.setTokenForHost(host, token);
+        return token;
+      }
+      return "";
     } catch {
       return "";
     }
@@ -234,33 +250,26 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
   async function primeTokenCaptureOnTab(tabId, dc, prefix) {
     try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        world: "MAIN",
-        args: [dc, prefix],
-        func: (dcArg, prefixArg) => {
-          try {
-            const dc = String(dcArg || "");
-            const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
-            const p = String(prefixArg || "");
-            const kvPath = p ? `/v1/kv/${encodeURI(p)}` : "/v1/kv/";
-            const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
-            fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => {});
-            fetch(kvUrl, { credentials: "include" }).catch(() => {});
-          } catch {}
-        }
-      });
+      await chrome.tabs.sendMessage(tabId, { type: "SS_PRIME", dc, prefix });
     } catch {}
   }
 
   async function ensureTokenAvailable(tabId, host, dc, prefix) {
     await installTokenSniffer(tabId);
     await primeTokenCaptureOnTab(tabId, dc, prefix);
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 12; i += 1) {
       const token = await fetchTokenFromBackground(host);
       if (token) return token;
-      await sleep(150);
+      await sleep(100);
     }
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: "SS_SCAN" });
+      for (let i = 0; i < 6; i += 1) {
+        const t = await fetchTokenFromBackground(host);
+        if (t) return t;
+        await sleep(100);
+      }
+    } catch {}
     const token = await captureAndStoreTokenFromConsulStorage(tabId, host, dc);
     if (token) return token;
     return "";

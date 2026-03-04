@@ -18,15 +18,19 @@ const src = {
   manifest: path.join(root, "manifest.json")
 };
 
-const dist = {
-  root: path.join(root, "dist"),
-  popupHtml: path.join(root, "dist/popup.html"),
-  popupCss: path.join(root, "dist/styles.css"),
-  popupJs: path.join(root, "dist/popup.js"),
-  background: path.join(root, "dist/background.js"),
-  assets: path.join(root, "dist/assets"),
-  manifest: path.join(root, "dist/manifest.json")
-};
+function distPaths(target) {
+  const base = path.join(root, "dist", target);
+  return {
+    root: base,
+    popupHtml: path.join(base, "popup.html"),
+    popupCss: path.join(base, "styles.css"),
+    popupJs: path.join(base, "popup.js"),
+    background: path.join(base, "background.js"),
+    assets: path.join(base, "assets"),
+    manifest: path.join(base, "manifest.json"),
+    content: path.join(base, "content")
+  };
+}
 
 async function rimraf(p) {
   try {
@@ -42,6 +46,7 @@ async function copyDir(srcDir, destDir) {
   await ensureDir(destDir);
   const entries = await fs.readdir(srcDir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
+    if (entry.name === ".DS_Store") continue;
     const srcPath = path.join(srcDir, entry.name);
     const destPath = path.join(destDir, entry.name);
     if (entry.isDirectory()) {
@@ -84,27 +89,27 @@ function rewriteBackground(content) {
   return out;
 }
 
-async function buildCss() {
+async function buildCss(dist) {
   const css = await fs.readFile(src.popupCss, "utf8");
   const result = await esbuild.transform(css, { loader: "css", minify: true });
   await ensureDir(path.dirname(dist.popupCss));
   await fs.writeFile(dist.popupCss, result.code, "utf8");
 }
 
-async function buildPopupBundle() {
+async function buildPopupBundle(dist, target) {
   // Use esbuild bundler to preserve module order via modules/index.js
   await ensureDir(path.dirname(dist.popupJs));
   await esbuild.build({
     entryPoints: [path.join(src.popupModules, "index.js")],
     bundle: true,
     minify: true,
-    target: "chrome116",
+    target: target === "firefox" ? "firefox115" : "chrome116",
     format: "iife",
     outfile: dist.popupJs
   });
 }
 
-async function buildBackgroundBundle() {
+async function buildBackgroundBundle(dist, target) {
   const order = [
     path.join(src.shared, "constants.js"),
     path.join(src.shared, "storage.js"),
@@ -120,42 +125,100 @@ async function buildBackgroundBundle() {
     }
     combined += `\n${code}\n`;
   }
-  const result = await esbuild.transform(combined, { loader: "js", minify: true, target: "chrome116" });
+  const result = await esbuild.transform(combined, { loader: "js", minify: true, target: target === "firefox" ? "firefox115" : "chrome116" });
   await fs.writeFile(dist.background, result.code, "utf8");
 }
 
-async function writePopupHtml() {
+async function writePopupHtml(dist) {
   const html = await fs.readFile(src.popupHtml, "utf8");
   const out = rewritePopupHtml(html);
   await fs.writeFile(dist.popupHtml, out, "utf8");
 }
 
-async function writeManifest() {
+async function writeManifest(dist, target) {
   const raw = await fs.readFile(src.manifest, "utf8");
   const m = JSON.parse(raw);
-  const distManifest = {
-    ...m,
-    permissions: m.permissions,
-    optional_host_permissions: m.optional_host_permissions,
-    background: { ...(m.background || {}), service_worker: "background.js" },
-    action: { ...(m.action || {}), default_popup: "popup.html" }
-  };
-  await fs.writeFile(dist.manifest, JSON.stringify(distManifest, null, 2), "utf8");
+  if (target === "firefox") {
+    const author =
+      typeof m.author === "string"
+        ? m.author
+        : [m?.author?.name, m?.author?.email].filter(Boolean).join(" ");
+    const ff = {
+      manifest_version: m.manifest_version,
+      name: m.name,
+      description: m.description,
+      homepage_url: m.homepage_url,
+      author,
+      version: m.version,
+      icons: m.icons,
+      background: { scripts: ["background.js"] },
+      action: { ...(m.action || {}), default_popup: "popup.html" },
+      permissions: m.permissions,
+      host_permissions: Array.isArray(m.host_permissions)
+        ? m.host_permissions
+        : Array.isArray(m.optional_host_permissions)
+        ? m.optional_host_permissions
+        : ["https://*/*", "http://*/*"],
+      browser_specific_settings: {
+        gecko: {
+          id: "secretssanta@ninadsutrave",
+          // Omit id for AMO; add one when self-hosting if needed
+          strict_min_version: "140.0",
+          data_collection_permissions: {
+            required: ["websiteContent"],
+            optional: []
+          }
+        },
+        gecko_android: {
+          strict_min_version: "142.0"
+        }
+      },
+      content_scripts: [
+        {
+          matches: ["https://*/ui/*", "http://*/ui/*"],
+          js: ["content/consul-token-bridge.js"],
+          run_at: "document_start"
+        }
+      ]
+    };
+    await fs.writeFile(dist.manifest, JSON.stringify(ff, null, 2), "utf8");
+  } else {
+    const distManifest = {
+      ...m,
+      background: { ...(m.background || {}), service_worker: "background.js" },
+      action: { ...(m.action || {}), default_popup: "popup.html" }
+    };
+    await fs.writeFile(dist.manifest, JSON.stringify(distManifest, null, 2), "utf8");
+  }
 }
 
-async function main() {
+async function buildTarget(target) {
+  const dist = distPaths(target);
   await rimraf(dist.root);
   await ensureDir(dist.root);
   await ensureDir(dist.assets);
-
+  await ensureDir(dist.content);
   await copyDir(src.assets, dist.assets).catch(() => {});
-  await buildCss();
-  await buildPopupBundle();
-  await buildBackgroundBundle();
-  await writePopupHtml();
-  await writeManifest();
+  await buildCss(dist);
+  await buildPopupBundle(dist, target);
+  await buildBackgroundBundle(dist, target);
+  await writePopupHtml(dist);
+  await writeManifest(dist, target);
+  if (target === "firefox") {
+    // copy content script
+    await fs.copyFile(path.join(root, "src/content/consul-token-bridge.js"), path.join(dist.content, "consul-token-bridge.js")).catch(() => {});
+  }
+  console.log(`Dist built at: ${dist.root}`);
+}
 
-  console.log("Dist built at:", dist.root);
+async function main() {
+  const target = process.argv.find((a) => a.startsWith("--target="))?.split("=")[1] || "chromium";
+  if (target === "all") {
+    await buildTarget("chromium");
+    await buildTarget("firefox");
+  } else {
+    await buildTarget(target);
+  }
 }
 
 main().catch((err) => {
