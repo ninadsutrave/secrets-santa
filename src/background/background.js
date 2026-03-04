@@ -145,7 +145,14 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     }
   },
   { urls: CONSTANTS.WEB_REQUEST_URLS },
-  ["requestHeaders", "extraHeaders"]
+  (() => {
+    // Firefox can sometimes be picky about "extraHeaders" if not specifically needed for hidden headers.
+    // Chrome needs it for some sensitive headers. We'll use it only where strictly necessary or if not Firefox.
+    const isFirefox = typeof browser !== "undefined" || (typeof navigator !== "undefined" && /Firefox/.test(navigator.userAgent));
+    const specs = ["requestHeaders"];
+    if (!isFirefox) specs.push("extraHeaders");
+    return specs;
+  })()
 );
 
 chrome.commands.onCommand.addListener((command) => {
