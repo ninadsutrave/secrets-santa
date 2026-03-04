@@ -55,7 +55,14 @@ async function validateToken(host, token) {
         credentials: "include",
         headers: { [CONSTANTS.HEADERS.CONSUL_TOKEN_REQUEST]: t }
       });
-      return res.ok;
+      if (res.ok) return true;
+      const policy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+      if ((res.status === 401 || res.status === 403) && policy === "deny") {
+        // Treat as inconclusive in environments that deny token introspection.
+        // Allow token to proceed to KV listing where effective permissions are evaluated.
+        return true;
+      }
+      return false;
     };
     if (await doCheck("https")) return true;
     return await doCheck("http");

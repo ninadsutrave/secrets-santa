@@ -46,6 +46,7 @@ async function copyDir(srcDir, destDir) {
   await ensureDir(destDir);
   const entries = await fs.readdir(srcDir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
+    if (entry.name === ".DS_Store") continue;
     const srcPath = path.join(srcDir, entry.name);
     const destPath = path.join(destDir, entry.name);
     if (entry.isDirectory()) {
@@ -160,13 +161,21 @@ async function writeManifest(dist, target) {
         : ["https://*/*", "http://*/*"],
       browser_specific_settings: {
         gecko: {
+          id: "secretssanta@ninadsutrave",
           // Omit id for AMO; add one when self-hosting if needed
-          strict_min_version: "115.0"
+          strict_min_version: "140.0",
+          data_collection_permissions: {
+            required: ["websiteContent"],
+            optional: []
+          }
+        },
+        gecko_android: {
+          strict_min_version: "142.0"
         }
       },
       content_scripts: [
         {
-          matches: ["https://*/ui/*/kv/*", "http://*/ui/*/kv/*"],
+          matches: ["https://*/ui/*", "http://*/ui/*"],
           js: ["content/consul-token-bridge.js"],
           run_at: "document_start"
         }
