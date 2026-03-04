@@ -1,3 +1,5 @@
+<p align="left"><img src="assets/logo.png" alt="SecretsSanta logo" width="120" /></p>
+
 # 🎅 SecretsSanta
 
 SecretsSanta is a Chrome extension that helps developers fetch, view, copy, and compare secrets stored in Consul KV — safely and effortlessly.
@@ -24,6 +26,10 @@ SecretsSanta works on all Chromium-based browsers and Firefox.
 - **Firefox**: [Install from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/secretssanta/placeholder)
 
 *(Note: Store links are placeholders until published. You can install manually using the steps below.)*
+
+## 🔗 Project Links
+
+- GitHub: https://github.com/ninadsutrave/secrets-santa
 
 ## 🚀 Getting Started
 
@@ -64,14 +70,19 @@ SecretsSanta works on all Chromium-based browsers and Firefox.
     - Use the **Save** icon to snapshot the current view for later comparison.
 
 ## 🖼️ Preview
-
-Screenshots of the extension in action:
-- Popup header and controls
-- Table view with masking, copy, edit, JSON
-- Upload Key Values modal (.env / JetBrains)
-- Saved collections list and Compare diff view
-
-Add images in this section once available (e.g. `docs/screenshots/01-popup.png`, `docs/screenshots/02-table.png`, etc.).
+ 
+ <table>
+   <tr>
+     <td align="center">
+       <img src="assets/screenshot1.png" alt="KV table view (mask, copy, edit, JSON)" width="340" /><br/>
+       <sub>KV table view (mask, copy, edit, JSON)</sub>
+     </td>
+     <td align="center">
+       <img src="assets/screenshot2.png" alt="Compare stage vs production key values" width="340" /><br/>
+       <sub>Compare stage vs production key values</sub>
+     </td>
+   </tr>
+ </table>
 
 ## 🧱 Build & Package (dist/)
 
@@ -104,6 +115,18 @@ Generate a clean, minified `dist/` folder with one JS per context:
    - Permissions and optional host permissions are taken directly from the root manifest.json.
    - Ensure icons exist under `assets/` and paths in `manifest.json` point to them.
 
+## 🧭 Build Targets
+
+- Chromium family
+  - `npm run build:chromium` → outputs to `dist/chromium/`
+- Firefox
+  - `npm run build:firefox` → outputs to `dist/firefox/`
+- Both
+  - `npm run build:all`
+- Packages
+  - `npm run zip` → produces SecretsSanta-chromium.zip and SecretsSanta-firefox.zip
+  - `npm run xpi:firefox` → produces SecretsSanta-firefox.xpi (for Dev/Nightly testing)
+
 ## 🛠️ Development & Contribution
 
 We welcome contributions! This project is open source.
@@ -126,6 +149,16 @@ Since this is a browser extension, testing is primarily manual:
 - **Token**: Ensure auth works without manual token entry.
 - **CRUD**: Try editing a value and uploading a .env file.
 - **Diff**: Save two different paths (e.g. `/app/dev` and `/app/prod`) and try the Compare feature.
+
+## 📚 Docs & Policies
+
+- Contributing: [CONTRIBUTING.md](./CONTRIBUTING.md)
+- Code of Conduct: [docs/CODE_OF_CONDUCT.md](./docs/CODE_OF_CONDUCT.md)
+- Security Policy: [docs/SECURITY.md](./docs/SECURITY.md)
+- Privacy Policy: [PRIVACY.md](./PRIVACY.md)
+- Changelog: [docs/CHANGELOG.md](./docs/CHANGELOG.md)
+- Architecture: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- Reviewer Notes: [docs/REVIEWER_NOTES.md](./docs/REVIEWER_NOTES.md)
 
 ## 🔐 Security
 
