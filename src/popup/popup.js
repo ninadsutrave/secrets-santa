@@ -3,7 +3,7 @@
    - Renders keys/values with masking/copy/pretty JSON
    - Saves and compares snapshots */
 
-const { CONSTANTS, STORAGE, TOKEN, ENV, MODALS, TABLE, COLLECTIONS, COMPARE, UPLOAD } = globalThis.SECRETS_SANTA;
+const { CONSTANTS, STORAGE, TOKEN, ENV, TABLE, COLLECTIONS, COMPARE, UPLOAD } = globalThis.SECRETS_SANTA;
 
 const loadBtn = document.getElementById("loadBtn");
 const grantPermissionBtn = document.getElementById("grantPermissionBtn");
@@ -41,14 +41,11 @@ let currentSecrets = {};
 let currentView = "table";
 let currentPrefix = "";
 let currentHost = "";
-let currentLoadedCollectionId = null;
 let isDiffView = false;
 let comparePickerOpen = false;
-let compareSelectedIds = [];
 let diffLeftTitle = "";
 let diffRightTitle = "";
 let pendingConsulContext = null;
-let pendingUpload = null;
 let currentDataSource = "none";
 let currentScheme = "https";
 let currentDc = "";
@@ -109,12 +106,10 @@ function resetUI() {
   showLoader(false);
   setPostLoadVisible(false);
   comparePickerOpen = false;
-  compareSelectedIds = [];
   diffLeftTitle = "";
   diffRightTitle = "";
   currentHost = "";
   pendingConsulContext = null;
-  pendingUpload = null;
   currentDataSource = "none";
   if (grantPermissionBtn) grantPermissionBtn.classList.add("hidden");
   setCompareVisible(false, false);
@@ -165,7 +160,6 @@ COLLECTIONS.setup({
     currentSecrets = collection.keys;
     currentPrefix = collection.title || "";
     currentHost = collection.host || currentHost || "";
-    currentLoadedCollectionId = collection.id || null;
     isDiffView = false;
     currentDataSource = "saved";
     TABLE.renderTable(currentSecrets);
@@ -291,7 +285,7 @@ function showHostPermissionPrompt(ctx) {
   pendingConsulContext = ctx;
   if (grantPermissionBtn) grantPermissionBtn.classList.remove("hidden");
   setStatus(
-    `Santa asks for permission to access Consul on this host. Your session token is used only in your browser, and actions run on paths you choose.`
+    "Santa asks for permission to access Consul on this host. Your session token is used only in your browser, and actions run on paths you choose."
   );
 }
 
@@ -302,107 +296,7 @@ function hideHostPermissionPrompt() {
 }
 
 // Attempts a heuristic token capture from local/session storage in the page context.
-async function tryCaptureTokenFromTab(tabId) {
-  try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        const uuidInText = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-
-        const shouldScanKey = (key) => {
-          const k = String(key || "").toLowerCase();
-          if (!k) return false;
-          if (k.includes("consul")) return true;
-          if (k.includes("token")) return true;
-          if (k.includes("acl")) return true;
-          if (k.includes("session")) return true;
-          return false;
-        };
-
-        const tryExtractUuid = (value) => {
-          const v = String(value || "").trim();
-          if (!v) return "";
-          if (uuidLike.test(v)) return v;
-          const match = v.match(uuidInText);
-          if (match?.[0]) return match[0];
-          return "";
-        };
-
-        const findUuidDeep = (obj, depth = 0) => {
-          if (!obj || depth > 5) return "";
-          if (typeof obj === "string") return tryExtractUuid(obj);
-          if (typeof obj !== "object") return "";
-          if (Array.isArray(obj)) {
-            for (const item of obj) {
-              const found = findUuidDeep(item, depth + 1);
-              if (found) return found;
-            }
-            return "";
-          }
-          for (const key in obj) {
-            const found = findUuidDeep(obj[key], depth + 1);
-            if (found) return found;
-          }
-          return "";
-        };
-
-        const candidates = [];
-        const add = (k, v, source) => {
-          if (!k || !v) return;
-          const key = String(k);
-          if (!shouldScanKey(key)) return;
-
-          const raw = String(v).trim();
-          if (!raw) return;
-
-          let token = tryExtractUuid(raw);
-          if (!token) {
-            try {
-              const parsed = JSON.parse(raw);
-              token = findUuidDeep(parsed);
-            } catch {
-              token = "";
-            }
-          }
-          if (!token) return;
-
-          let score = 0;
-          const lowerKey = key.toLowerCase();
-          if (lowerKey.includes("consul")) score += 4;
-          if (lowerKey.includes("token")) score += 6;
-          if (lowerKey.includes("acl")) score += 2;
-          if (source === "sessionStorage") score += 1;
-          candidates.push({ value: token, score, source, key });
-        };
-
-        const scan = (storage, source) => {
-          if (!storage) return;
-          for (let i = 0; i < storage.length; i += 1) {
-            const k = storage.key(i);
-            const v = storage.getItem(k);
-            add(k, v, source);
-          }
-        };
-
-        scan(localStorage, "localStorage");
-        scan(sessionStorage, "sessionStorage");
-
-        candidates.sort((a, b) => b.score - a.score);
-        const top = candidates[0];
-        if (!top) return "";
-        if (top.score < 6) return "";
-        return top.value;
-      }
-    });
-
-    const token = String(results?.[0]?.result || "");
-    if (!token) return "";
-    return token;
-  } catch {
-    return "";
-  }
-}
+// Function removed as logic lives in content scripts now
 
 /* token helpers moved to token.js */
 
@@ -463,19 +357,26 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
       if (response.error) {
         const message = String(response.error || "");
         const lower = message.toLowerCase();
-        let friendly = "Santa is unable to get keys. Please refresh and try again.";
-        if (lower.includes("prefix not found")) {
-          friendly = "Santa is unable to get keys for this prefix. Check datacenter/prefix or permissions.";
-        } else if (lower.includes("no consul token captured")) {
-          friendly = "Santa couldn’t find your Consul session yet. Please interact with the Consul UI and try again.";
+        let friendly = "Santa is unable to get keys. Please interact with the Consul UI (logged in) and try again.";
+        if (lower.includes("grab your consul session")) {
+          friendly = "Santa couldn't grab your Consul session. Please interact with the Consul UI while logged in and try again!";
+        } else if (lower.includes("not found")) {
+          // If the background already provided a friendly message for not found, use it.
+          // Otherwise, provide a default friendly one.
+          friendly = lower.includes("santa can't find") ? message : "Santa can't find these secrets. Check the folder path or datacenter, or interact with the Consul UI to refresh your session.";
+        } else if (lower.includes("santa noticed your consul session expired")) {
+          friendly = "Santa noticed your Consul session expired. Please interact with the Consul UI (logged in) and try again!";
         } else if (lower.includes("permission denied") || lower.includes("acl not found") || lower.includes("access")) {
-          friendly = "Santa is unable to get keys: access issue. Ensure your token has key:read and refresh.";
+          friendly = "Your Consul session might have expired. Please interact with the Consul UI (logged in) and try again!";
+        } else if (lower.includes("santa says") || lower.includes("santa couldn't") || lower.includes("santa can't")) {
+          friendly = message;
         }
+
         const shouldRetry =
           attempt === 0 &&
           tabId &&
           (lower.includes("acl not found") ||
-            lower.includes("no consul token captured") ||
+            lower.includes("santa couldn't capture") ||
             lower.includes("permission denied") ||
             lower.includes("access"));
         if (shouldRetry) {
@@ -506,7 +407,6 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
       currentHost = ctx.host || "";
       currentScheme = ctx.scheme || "https";
       currentDc = ctx.dc || "";
-      currentLoadedCollectionId = null;
       isDiffView = false;
       currentDataSource = "page";
 
@@ -545,7 +445,7 @@ loadBtn.addEventListener("click", async () => {
       const parts = u.pathname.split("/").filter(Boolean);
       const isConsulUi = parts.includes("ui");
       if (isConsulUi && !parts.includes("kv")) {
-        setStatus("Santa can help once you open a Consul KV path (ui/<dc>/kv/...).");
+        setStatus("Santa can help once you open a Consul KV page.");
       } else {
         setStatus("Santa can only help you on a valid Consul KV page.");
       }
@@ -563,12 +463,7 @@ loadBtn.addEventListener("click", async () => {
   }
 
   hideHostPermissionPrompt();
-  const token = await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
-  if (!token) {
-    showLoader(false);
-    setStatus("Refreshing Consul session… Open a KV item or expand folders to trigger API calls, then try again.");
-    return;
-  }
+  await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
   loadSecretsForContext(ctx, tab.id);
 });
 
@@ -589,12 +484,7 @@ grantPermissionBtn.addEventListener("click", async () => {
   showLoader(true);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id) {
-    const token = await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
-    if (!token) {
-      showLoader(false);
-      setStatus("Refreshing Consul session… Please interact with the Consul UI and try again.");
-      return;
-    }
+    await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
     loadSecretsForContext(ctx, tab.id);
   } else {
     showLoader(false);
@@ -665,12 +555,12 @@ loadSavedBtn.addEventListener("click", () => {
     });
 
     COLLECTIONS.renderList(collections, true); // true for "grouped mode"
-    
+
     setPostLoadVisible(false);
     setCompareVisible(true, collections.length >= 2);
     loadSavedBtn.disabled = false;
     setStatus(`Loaded ${collections.length} collections`);
-    
+
     // Copy Jetbrains button visible but disabled on Load Saved page
     if (intellijBtn) {
       intellijBtn.classList.remove("hidden");

@@ -25,10 +25,17 @@ Add the following scripts to package.json:
   "scripts": {
     "build:chromium": "node scripts/build.mjs --target=chromium",
     "build:firefox": "node scripts/build.mjs --target=firefox",
-    "build:all": "node scripts/build.mjs --target=all"
+    "build:all": "node scripts/build.mjs --target=all",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix"
   }
 }
 ```
+
+## Pull Requests & CI
+Our GitHub Actions CI pipeline runs automatically on all Pull Requests to the `master` branch.
+- **Linting is enforced**: You must ensure your code passes `npm run lint` before committing. If the linter fails, the CI pipeline will fail, and **merging to master will be blocked**.
+- You can auto-fix formatting issues locally using `npm run lint:fix`.
 
 ## Notes
 - Chromium builds use Manifest V3 service worker and optional host permissions

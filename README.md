@@ -137,10 +137,11 @@ We welcome contributions! This project is open source.
 2.  **Clone** your fork locally.
 3.  **Create a branch** for your feature or fix.
 4.  **Make changes**: The codebase uses modular vanilla JavaScript (ES modules) in `src/popup/modules/`. No build step is required for development.
-5.  **Test**:
+5.  **Lint your code**: Run `npm run lint` to ensure your changes comply with the project's code style. **All PRs must pass the CI linter to be merged into master.**
+6.  **Test**:
     - Reload the extension in your browser (`chrome://extensions` -> click refresh icon on the card).
     - Verify functionality on a real Consul instance or a local dev agent (`consul agent -dev`).
-6.  **Push** your branch and open a **Pull Request** to `https://github.com/ninadsutrave/secrets-santa`.
+7.  **Push** your branch and open a **Pull Request** to `https://github.com/ninadsutrave/secrets-santa`.
 
 ### Testing
 

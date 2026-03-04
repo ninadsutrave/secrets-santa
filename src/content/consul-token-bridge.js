@@ -2,13 +2,13 @@
   function emitToken(t) {
     try {
       window.dispatchEvent(new CustomEvent("SECRETS_SANTA_TOKEN", { detail: String(t || "") }));
-    } catch {}
+    } catch { }
     try {
       const token = String(t || "");
       if (token && typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
         chrome.runtime.sendMessage({ type: "SET_TOKEN", token, host: location.host });
       }
-    } catch {}
+    } catch { }
   }
   function norm(h) {
     return h ? String(h) : "";
@@ -90,12 +90,24 @@
           credentials: "include",
           headers: { "X-Consul-Token": best }
         })
-          .then((res) => {
-            if (res && res.ok) emitToken(best);
+          .then(async (res) => {
+            if (res && res.ok) {
+              emitToken(best);
+              return;
+            }
+            try {
+              const policy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+              if (res && (res.status === 401 || res.status === 403) && policy === "deny") {
+                const errorText = String(await res.text()).toLowerCase();
+                if (!errorText.includes("acl not found")) {
+                  emitToken(best);
+                }
+              }
+            } catch { }
           })
-          .catch(() => {});
+          .catch(() => { });
       }
-    } catch {}
+    } catch { }
   }
   function scanCookies() {
     try {
@@ -124,12 +136,24 @@
           credentials: "include",
           headers: { "X-Consul-Token": best }
         })
-          .then((res) => {
-            if (res && res.ok) emitToken(best);
+          .then(async (res) => {
+            if (res && res.ok) {
+              emitToken(best);
+              return;
+            }
+            try {
+              const policy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+              if (res && (res.status === 401 || res.status === 403) && policy === "deny") {
+                const errorText = String(await res.text()).toLowerCase();
+                if (!errorText.includes("acl not found")) {
+                  emitToken(best);
+                }
+              }
+            } catch { }
           })
-          .catch(() => {});
+          .catch(() => { });
       }
-    } catch {}
+    } catch { }
   }
   function wrapFetch() {
     const orig = window.fetch;
@@ -183,7 +207,7 @@
             })();
         }
         if (token && sameOrigin && isConsulApi) emitToken(token);
-      } catch {}
+      } catch { }
       return orig.apply(this, arguments);
     };
   }
@@ -210,9 +234,9 @@
           if (lower === "authorization" && t.toLowerCase().startsWith("bearer ")) {
             t = t.slice(7).trim();
           }
-          if (t && isConsulApi) emit(t);
+          if (t && isConsulApi) emitToken(t);
         }
-      } catch {}
+      } catch { }
       return origSet.apply(this, arguments);
     };
   }
@@ -222,7 +246,7 @@
     try {
       scanStorages();
       scanCookies();
-    } catch {}
+    } catch { }
     try {
       if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
         chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -233,8 +257,8 @@
               const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
               const kvPath = prefix ? `/v1/kv/${encodeURI(prefix)}` : "/v1/kv/";
               const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
-              fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => {});
-              fetch(kvUrl, { credentials: "include" }).catch(() => {});
+              fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => { });
+              fetch(kvUrl, { credentials: "include" }).catch(() => { });
               sendResponse({ ok: true });
               return true;
             }
@@ -244,11 +268,11 @@
               sendResponse({ ok: true });
               return true;
             }
-          } catch {}
+          } catch { }
           return false;
         });
       }
-    } catch {}
+    } catch { }
     window.__ss_bridge_installed = true;
   }
 })(); 

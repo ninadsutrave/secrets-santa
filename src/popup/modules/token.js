@@ -37,9 +37,15 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             try {
               const policy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
               if ((res.status === 401 || res.status === 403) && policy === "deny") {
+                try {
+                  const errorText = String(await res.text()).toLowerCase();
+                  if (errorText.includes("acl not found")) {
+                    return false;
+                  }
+                } catch { }
                 return true;
               }
-            } catch {}
+            } catch { }
             return false;
           } catch {
             return false;
@@ -159,12 +165,12 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
               if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
                 chrome.runtime.sendMessage({ type: "SET_TOKEN", token, host: location.host });
               }
-            } catch {}
+            } catch { }
           });
           window.__ss_listener_installed = true;
         }
       });
-    } catch {}
+    } catch { }
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
@@ -174,7 +180,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
           const emit = (t) => {
             try {
               window.dispatchEvent(new CustomEvent("SECRETS_SANTA_TOKEN", { detail: t }));
-            } catch {}
+            } catch { }
           };
           const norm = (h) => (h ? String(h) : "");
           const wrapFetch = () => {
@@ -196,40 +202,40 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
                 let token = "";
                 if (init && init.headers) {
                   if (init.headers instanceof Headers) {
-                  token =
-                    norm(init.headers.get("X-Consul-Token") || init.headers.get("x-consul-token")) ||
-                    (function () {
-                      const a = String(init.headers.get("Authorization") || init.headers.get("authorization") || "");
-                      return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
-                    })();
+                    token =
+                      norm(init.headers.get("X-Consul-Token") || init.headers.get("x-consul-token")) ||
+                      (function () {
+                        const a = String(init.headers.get("Authorization") || init.headers.get("authorization") || "");
+                        return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
+                      })();
                   } else if (Array.isArray(init.headers)) {
                     const kv = init.headers.find(([k]) => String(k).toLowerCase() === "x-consul-token");
-                  token =
-                    (kv ? String(kv[1]) : "") ||
-                    (function () {
-                      const auth = init.headers.find(([k]) => String(k).toLowerCase() === "authorization");
-                      const a = auth ? String(auth[1] || "") : "";
-                      return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
-                    })();
+                    token =
+                      (kv ? String(kv[1]) : "") ||
+                      (function () {
+                        const auth = init.headers.find(([k]) => String(k).toLowerCase() === "authorization");
+                        const a = auth ? String(auth[1] || "") : "";
+                        return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
+                      })();
                   } else if (typeof init.headers === "object") {
-                  token =
-                    norm(init.headers["X-Consul-Token"] || init.headers["x-consul-token"]) ||
-                    (function () {
-                      const a = String(init.headers["Authorization"] || init.headers["authorization"] || "");
-                      return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
-                    })();
+                    token =
+                      norm(init.headers["X-Consul-Token"] || init.headers["x-consul-token"]) ||
+                      (function () {
+                        const a = String(init.headers["Authorization"] || init.headers["authorization"] || "");
+                        return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
+                      })();
                   }
                 }
                 if (!token && input && typeof input === "object" && input.headers instanceof Headers) {
-                token =
-                  norm(input.headers.get("X-Consul-Token") || input.headers.get("x-consul-token")) ||
-                  (function () {
-                    const a = String(input.headers.get("Authorization") || input.headers.get("authorization") || "");
-                    return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
-                  })();
+                  token =
+                    norm(input.headers.get("X-Consul-Token") || input.headers.get("x-consul-token")) ||
+                    (function () {
+                      const a = String(input.headers.get("Authorization") || input.headers.get("authorization") || "");
+                      return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
+                    })();
                 }
                 if (token && sameOrigin && isConsulApi) emit(token);
-              } catch {}
+              } catch { }
               return orig.apply(this, arguments);
             };
           };
@@ -258,7 +264,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
                   }
                   if (t && isConsulApi) emit(t);
                 }
-              } catch {}
+              } catch { }
               return origSet.apply(this, arguments);
             };
           };
@@ -273,36 +279,36 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
             const kvPath = prefix ? `/v1/kv/${encodeURI(prefix)}` : "/v1/kv/";
             const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
-            fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => {});
-            fetch(kvUrl, { credentials: "include" }).catch(() => {});
-          } catch {}
+            fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => { });
+            fetch(kvUrl, { credentials: "include" }).catch(() => { });
+          } catch { }
         }
       });
-    } catch {}
+    } catch { }
   }
 
   async function primeTokenCaptureOnTab(tabId, dc, prefix) {
     try {
       await chrome.tabs.sendMessage(tabId, { type: "SS_PRIME", dc, prefix });
-    } catch {}
+    } catch { }
   }
 
   async function ensureTokenAvailable(tabId, host, dc, prefix) {
     await installTokenSniffer(tabId, dc, prefix);
     await primeTokenCaptureOnTab(tabId, dc, prefix);
-    for (let i = 0; i < 12; i += 1) {
+    for (let i = 0; i < 40; i += 1) { // 2 seconds total polling
       const token = await fetchTokenFromBackground(host);
       if (token) return token;
-      await sleep(100);
+      await sleep(50);
     }
     try {
       await chrome.tabs.sendMessage(tabId, { type: "SS_SCAN" });
-      for (let i = 0; i < 6; i += 1) {
+      for (let i = 0; i < 20; i += 1) { // 1 second more
         const t = await fetchTokenFromBackground(host);
         if (t) return t;
-        await sleep(100);
+        await sleep(50);
       }
-    } catch {}
+    } catch { }
     const token = await captureAndStoreTokenFromConsulStorage(tabId, host, dc);
     if (token) return token;
     return "";
