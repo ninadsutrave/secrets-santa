@@ -64,14 +64,14 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
    * Selecting an item loads the collection via onLoadCollection.
    */
   function renderList(collections, groupedMode = false) {
-    const { savedList, table, onLoadCollection } = cfg;
+    const { savedList, table } = cfg;
     if (!savedList) return;
     savedList.innerHTML = "";
     if (table) table.classList.add("hidden");
     savedList.classList.remove("hidden");
 
     const fragment = document.createDocumentFragment();
-    
+
     // Sort logic
     const sortFn = (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
 
@@ -87,14 +87,14 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
         if (!grouped[h]) grouped[h] = [];
         grouped[h].push(c);
       });
-      
+
       const hosts = Object.keys(grouped).sort();
       hosts.forEach(host => {
         const header = document.createElement("li");
         header.className = "saved-host-header";
         header.textContent = host;
         fragment.appendChild(header);
-        
+
         const hostItems = grouped[host].sort(sortFn);
         renderItems(hostItems, fragment, true);
       });
@@ -133,7 +133,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       del.setAttribute("data-tip", "Delete collection");
       del.addEventListener("click", (event) => {
         event.stopPropagation();
-        deleteById(collection.id, groupedMode ? null : collection.host); 
+        deleteById(collection.id, groupedMode ? null : collection.host);
         // If grouped mode, we reload all. If not, we reload scoped.
         // Actually deleteById currently reloads ALL from storage and then filters if afterRenderHost is set.
         // We should fix deleteById to handle the refresh logic better or pass a callback.

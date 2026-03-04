@@ -137,10 +137,11 @@ We welcome contributions! This project is open source.
 2.  **Clone** your fork locally.
 3.  **Create a branch** for your feature or fix.
 4.  **Make changes**: The codebase uses modular vanilla JavaScript (ES modules) in `src/popup/modules/`. No build step is required for development.
-5.  **Test**:
+5.  **Lint your code**: Run `npm run lint` to ensure your changes comply with the project's code style. **All PRs must pass the CI linter to be merged into master.**
+6.  **Test**:
     - Reload the extension in your browser (`chrome://extensions` -> click refresh icon on the card).
     - Verify functionality on a real Consul instance or a local dev agent (`consul agent -dev`).
-6.  **Push** your branch and open a **Pull Request** to `https://github.com/ninadsutrave/secrets-santa`.
+7.  **Push** your branch and open a **Pull Request** to `https://github.com/ninadsutrave/secrets-santa`.
 
 ### Testing
 
@@ -149,6 +150,49 @@ Since this is a browser extension, testing is primarily manual:
 - **Token**: Ensure auth works without manual token entry.
 - **CRUD**: Try editing a value and uploading a .env file.
 - **Diff**: Save two different paths (e.g. `/app/dev` and `/app/prod`) and try the Compare feature.
+
+### Local Testing (Consul UI)
+
+1. Install Consul
+   - macOS:
+     ```bash
+     brew install consul
+     ```
+   - Linux:
+     - Debian/Ubuntu (using a package manager or downloaded binary):
+       ```bash
+       # If available via your package manager
+       sudo apt-get update && sudo apt-get install consul || true
+       # Or download a release and place the binary on PATH
+       ```
+     - Fedora/CentOS:
+       ```bash
+       sudo dnf install consul || sudo yum install consul || true
+       ```
+   - Windows:
+     ```powershell
+     winget install HashiCorp.Consul
+     # or
+     choco install consul
+     ```
+
+2. Start a local dev agent
+   ```bash
+   consul agent -dev
+   ```
+   - Opens the UI at http://localhost:8500/
+   - For a sample key:
+     ```bash
+     consul kv put app/dev/HELLO world
+     ```
+
+3. Open the Consul KV page
+   - Navigate to http://localhost:8500/ui/dc1/kv/app/dev/
+
+4. Use SecretsSanta
+   - Open the extension and click Load Secrets
+   - If prompted, grant host permission for localhost:8500
+   - When ACL is enabled, sign into the UI; the extension captures the session token automatically and lists keys for paths you open
 
 ## 📚 Docs & Policies
 

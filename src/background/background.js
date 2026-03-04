@@ -14,6 +14,8 @@ const { CONSTANTS, STORAGE, CONSUL } = globalThis.SECRETS_SANTA;
 
 const cachedTokens = {};
 const rejectedTokensByHost = {};
+const validationCache = {}; // { host: { token: string, expires: number } }
+const validationInFlight = {}; // { host: { token: string, promise: Promise } }
 
 /* Persists the latest X-Consul-Token so popup requests can reuse it. */
 function updateToken(token, host) {
@@ -26,11 +28,17 @@ function updateToken(token, host) {
 }
 
 function clearToken(host) {
-  const h = String(host || "").toLowerCase();
+  const h = normalizeHost(host);
   if (!h) return;
   delete cachedTokens[h];
   STORAGE.clearTokenForHost(h);
   if (rejectedTokensByHost[h]) delete rejectedTokensByHost[h];
+  if (validationCache[h]) delete validationCache[h];
+  if (validationInFlight[h]) delete validationInFlight[h];
+}
+
+function normalizeHost(host) {
+  return String(host || "").toLowerCase().trim();
 }
 
 function isAclNotFound(errorText) {
@@ -43,29 +51,61 @@ function isPermissionDenied(errorText) {
 
 async function validateToken(host, token) {
   try {
-    const h = String(host || "");
+    const h = String(host || "").toLowerCase();
     const t = String(token || "");
     if (!h || !t) return false;
+
+    // 1. Check validation cache
+    if (validationCache[h] && validationCache[h].token === t && validationCache[h].expires > Date.now()) {
+      return true;
+    }
+
+    // 2. Check in-flight validations
+    if (validationInFlight[h] && validationInFlight[h].token === t) {
+      return validationInFlight[h].promise;
+    }
+
     const domainLike = /^[a-z0-9.-]+(:\d+)?$/i;
     if (!domainLike.test(h)) return false;
-    const doCheck = async (scheme) => {
-      const url = `${scheme}://${h}/v1/acl/token/self`;
-      const res = await fetch(url, {
-        method: "GET",
-        credentials: "include",
-        headers: { [CONSTANTS.HEADERS.CONSUL_TOKEN_REQUEST]: t }
-      });
-      if (res.ok) return true;
-      const policy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
-      if ((res.status === 401 || res.status === 403) && policy === "deny") {
-        // Treat as inconclusive in environments that deny token introspection.
-        // Allow token to proceed to KV listing where effective permissions are evaluated.
-        return true;
+
+    const promise = (async () => {
+      const doCheck = async (scheme) => {
+        try {
+          const url = `${scheme}://${h}/v1/acl/token/self`;
+          const res = await fetch(url, {
+            method: "GET",
+            credentials: "include",
+            headers: { [CONSTANTS.HEADERS.CONSUL_TOKEN_REQUEST]: t }
+          });
+          if (res.ok) return true;
+          const policy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+          if ((res.status === 401 || res.status === 403) && policy === "deny") {
+            try {
+              const errorText = String(await res.text()).toLowerCase();
+              if (errorText.includes("acl not found")) {
+                return false;
+              }
+            } catch { }
+            return true;
+          }
+          return false;
+        } catch {
+          return false;
+        }
+      };
+
+      let result = await doCheck("https");
+      if (!result) result = await doCheck("http");
+
+      if (result) {
+        validationCache[h] = { token: t, expires: Date.now() + 300000 }; // Cache for 5 mins
       }
-      return false;
-    };
-    if (await doCheck("https")) return true;
-    return await doCheck("http");
+      delete validationInFlight[h];
+      return result;
+    })();
+
+    validationInFlight[h] = { token: t, promise };
+    return promise;
   } catch {
     return false;
   }
@@ -100,8 +140,8 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
               rejectedTokensByHost[h].add(candidate);
             }
           })
-          .catch(() => {});
-      } catch {}
+          .catch(() => { });
+      } catch { }
     }
   },
   { urls: CONSTANTS.WEB_REQUEST_URLS },
@@ -114,9 +154,16 @@ chrome.commands.onCommand.addListener((command) => {
   }
 });
 
-function getActiveToken(host) {
+async function getActiveToken(host) {
   const h = String(host || "").toLowerCase();
-  if (h && cachedTokens[h]) return Promise.resolve(cachedTokens[h]);
+  if (!h) return "";
+
+  // If a validation is in flight, wait for it
+  if (validationInFlight[h]) {
+    await validationInFlight[h].promise;
+  }
+
+  if (cachedTokens[h]) return cachedTokens[h];
   return new Promise((resolve) => STORAGE.getTokenForHost(h, (t) => resolve(t || "")));
 }
 
@@ -151,7 +198,7 @@ async function fetchKeyValue({ scheme, host, dc, fullKey, token }) {
             errorText = "";
           }
         }
-      } catch {}
+      } catch { }
     }
     if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy === "deny") {
       if (isAclNotFound(errorText) || isPermissionDenied(errorText) || !errorText) {
@@ -189,7 +236,6 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
 
   let res = await doFetch(token);
   let errorText = "";
-  let firstStatus = res.status;
   let firstErrorText = "";
   try {
     if (!res.ok) {
@@ -217,7 +263,7 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
             errorText = "";
           }
         }
-      } catch {}
+      } catch { }
     }
     // Avoid retrying without a token when policy is "deny" (common in org-hosted Consul) to prevent confusing 404s.
     if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy !== "deny") {
@@ -236,13 +282,13 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
       if (res.status === 404) {
         const notFoundMsg =
           defaultAclPolicyFinal === "deny"
-            ? "Prefix not found or not visible with current ACLs (404). Ensure the token has key:read on this prefix and datacenter."
-            : "Prefix not found (404). Check datacenter/prefix or permissions.";
+            ? (token ? "Santa can't find these secrets. Check the folder path or datacenter, or interact with the Consul UI to refresh your session." : "Santa couldn't grab your Consul session. Please interact with the Consul UI while logged in and try again.")
+            : "Santa can't find these secrets. Check the folder path or datacenter, or interact with the Consul UI and try again.";
         return { ok: false, status: 404, errorText: notFoundMsg };
       }
       if (!token && defaultAclPolicyFinal === "deny" && !errorText && !firstErrorText) {
         errorText =
-          "No Consul token captured yet. Open the Consul UI (logged in) and try again so Santa can reuse your token.";
+          "Santa couldn't grab your Consul session. Please interact with the Consul UI while logged in, then try again.";
       }
       if (!errorText && firstErrorText) {
         errorText = firstErrorText;
@@ -310,7 +356,7 @@ async function putKeyValue({ scheme, host, dc, fullKey, token, value }) {
             errorText = "";
           }
         }
-      } catch {}
+      } catch { }
     }
     if (token && (res.status === 401 || res.status === 403) && defaultAclPolicy === "deny") {
       if (isAclNotFound(errorText) || isPermissionDenied(errorText) || !errorText) {
@@ -436,7 +482,7 @@ async function fetchVisibleValues({ scheme, host, dc, prefix, keys }) {
   if (failed === keys.length && keys.length > 0) {
     if (firstAuthError) return { error: firstAuthError };
     return {
-      error: "Unable to fetch key values. Make sure Consul requests include X-Consul-Token, then refresh the page and try again."
+      error: "Santa couldn't fetch these key values. Please refresh the page and try again."
     };
   }
 
@@ -453,13 +499,13 @@ async function fetchPageValues({ scheme, host, dc, prefix }) {
     if (listRes.errorText) return { error: listRes.errorText };
     if (isAclNotFound(listRes.errorText)) {
       return {
-        error: "Consul says: ACL not found. The captured token is invalid/expired. Refresh the Consul UI page so Santa can capture a fresh token, then try again."
+        error: "Santa noticed your Consul session expired. Please interact with the Consul UI (logged in) and try again."
       };
     }
     if (listRes.status === 403) {
-      return { error: listRes.errorText || "Permission denied while listing keys (key:read required)." };
+      return { error: listRes.errorText || "Santa doesn't have permission to list these keys. Ensure you have key:read access." };
     }
-    return { error: `Failed to list keys (HTTP ${listRes.status || "?"}).` };
+    return { error: `Santa encountered an error listing keys (HTTP ${listRes.status || "?"}).` };
   }
 
   const keys = Array.isArray(listRes.keys) ? listRes.keys : [];

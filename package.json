@@ -8,10 +8,13 @@
     "build:chromium": "node scripts/build.mjs --target=chromium",
     "build:firefox": "node scripts/build.mjs --target=firefox",
     "build:all": "node scripts/build.mjs --target=all",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
     "zip": "npm run build:chromium && cd dist/chromium && zip -r ../../SecretsSanta-chromium.zip . && cd ../../ && npm run build:firefox && cd dist/firefox && zip -r ../../SecretsSanta-firefox.zip .",
     "xpi:firefox": "npm run build:firefox && cd dist/firefox && zip -r ../../SecretsSanta-firefox.xpi ."
   },
   "devDependencies": {
-    "esbuild": "^0.19.12"
+    "esbuild": "^0.19.12",
+    "eslint": "^9.39.3"
   }
 }

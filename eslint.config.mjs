@@ -1,0 +1,53 @@
+export default [
+    {
+        ignores: ["dist/", "node_modules/", "scripts/"],
+    },
+    {
+        files: ["src/**/*.js"],
+        languageOptions: {
+            ecmaVersion: 2022,
+            sourceType: "module",
+            globals: {
+                window: "readonly",
+                document: "readonly",
+                chrome: "readonly",
+                console: "readonly",
+                URL: "readonly",
+                fetch: "readonly",
+                setTimeout: "readonly",
+                clearTimeout: "readonly",
+                globalThis: "readonly",
+                sessionStorage: "readonly",
+                localStorage: "readonly",
+                CustomEvent: "readonly",
+                location: "readonly",
+                XMLHttpRequest: "readonly",
+                Headers: "readonly",
+                importScripts: "readonly",
+                Promise: "readonly",
+                Array: "readonly",
+                Object: "readonly",
+                String: "readonly",
+                Number: "readonly",
+                Boolean: "readonly",
+                decodeURIComponent: "readonly",
+                encodeURIComponent: "readonly",
+                encodeURI: "readonly",
+                JSON: "readonly",
+                navigator: "readonly",
+                crypto: "readonly",
+                Blob: "readonly",
+                TextDecoder: "readonly",
+                atob: "readonly",
+                requestAnimationFrame: "readonly",
+                confirm: "readonly"
+            },
+        },
+        rules: {
+            "no-unused-vars": "warn",
+            "no-undef": "error",
+            "semi": ["error", "always"],
+            "quotes": ["error", "double", { "avoidEscape": true }]
+        },
+    },
+];
