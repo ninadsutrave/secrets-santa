@@ -16,8 +16,7 @@
     "scripting"
   ],
   "optional_host_permissions": [
-    "https://*/*",
-    "http://*/*"
+    "<all_urls>"
   ],
   "commands": {
     "open-secrets-santa": {

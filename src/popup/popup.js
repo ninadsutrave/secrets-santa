@@ -35,6 +35,7 @@ const searchContainer = document.getElementById("search-container");
 const searchInput = document.getElementById("search-input");
 const darkToggle = document.getElementById("dark-toggle");
 const jsonModal = document.getElementById("jsonModal");
+const reviewLink = document.getElementById("reviewLink");
 
 let currentSecrets = {};
 let currentView = "table";
@@ -539,7 +540,18 @@ loadBtn.addEventListener("click", async () => {
   const ctx = parseConsulContext(tabUrl);
   if (!ctx) {
     showLoader(false);
-    setStatus("Santa can only help you on a valid Consul page.");
+    try {
+      const u = new URL(tabUrl);
+      const parts = u.pathname.split("/").filter(Boolean);
+      const isConsulUi = parts.includes("ui");
+      if (isConsulUi && !parts.includes("kv")) {
+        setStatus("Santa can help once you open a Consul KV path (ui/<dc>/kv/...).");
+      } else {
+        setStatus("Santa can only help you on a valid Consul KV page.");
+      }
+    } catch {
+      setStatus("Santa can only help you on a valid Consul KV page.");
+    }
     return;
   }
 
@@ -554,7 +566,7 @@ loadBtn.addEventListener("click", async () => {
   const token = await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
   if (!token) {
     showLoader(false);
-    setStatus("Refreshing Consul session… Please interact with the Consul UI and try again.");
+    setStatus("Refreshing Consul session… Open a KV item or expand folders to trigger API calls, then try again.");
     return;
   }
   loadSecretsForContext(ctx, tab.id);
@@ -756,6 +768,18 @@ STORAGE.getDarkMode((isDark) => {
 });
 
 updateSavedAvailability();
+
+if (reviewLink) {
+  const ua = navigator.userAgent.toLowerCase();
+  const LINKS = CONSTANTS.LINKS || {};
+  let url = LINKS.CHROME_WEBSTORE || "";
+  if (ua.includes("firefox")) {
+    url = LINKS.FIREFOX_ADDON || url;
+  } else if (ua.includes("edg/")) {
+    url = LINKS.EDGE_ADDONS || url;
+  }
+  reviewLink.href = url || "https://github.com/ninadsutrave/secrets-santa";
+}
 
 // Global tooltip handler
 const globalTooltip = document.getElementById("globalTooltip");

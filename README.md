@@ -150,6 +150,49 @@ Since this is a browser extension, testing is primarily manual:
 - **CRUD**: Try editing a value and uploading a .env file.
 - **Diff**: Save two different paths (e.g. `/app/dev` and `/app/prod`) and try the Compare feature.
 
+### Local Testing (Consul UI)
+
+1. Install Consul
+   - macOS:
+     ```bash
+     brew install consul
+     ```
+   - Linux:
+     - Debian/Ubuntu (using a package manager or downloaded binary):
+       ```bash
+       # If available via your package manager
+       sudo apt-get update && sudo apt-get install consul || true
+       # Or download a release and place the binary on PATH
+       ```
+     - Fedora/CentOS:
+       ```bash
+       sudo dnf install consul || sudo yum install consul || true
+       ```
+   - Windows:
+     ```powershell
+     winget install HashiCorp.Consul
+     # or
+     choco install consul
+     ```
+
+2. Start a local dev agent
+   ```bash
+   consul agent -dev
+   ```
+   - Opens the UI at http://localhost:8500/
+   - For a sample key:
+     ```bash
+     consul kv put app/dev/HELLO world
+     ```
+
+3. Open the Consul KV page
+   - Navigate to http://localhost:8500/ui/dc1/kv/app/dev/
+
+4. Use SecretsSanta
+   - Open the extension and click Load Secrets
+   - If prompted, grant host permission for localhost:8500
+   - When ACL is enabled, sign into the UI; the extension captures the session token automatically and lists keys for paths you open
+
 ## 📚 Docs & Policies
 
 - Contributing: [CONTRIBUTING.md](./CONTRIBUTING.md)
