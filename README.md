@@ -35,8 +35,8 @@ SecretsSanta works on all Chromium-based browsers and Firefox.
 
 ### Prerequisites
 
-- **Git**: to clone the repository.
-- **Node.js** (optional): strictly speaking not required to run the extension as it uses vanilla JS, but useful if you want to use any future build tools. Currently, the project is zero-dependency vanilla JS/HTML/CSS.
+- **Git**
+- **Node.js 18+** and **npm**
 
 ### Installation (Manual)
 
@@ -92,7 +92,12 @@ Generate a clean, minified `dist/` folder with one JS per context:
    ```bash
    npm install
    ```
-2. Build bundled dist
+2. TypeScript typecheck and lint
+   ```bash
+   npm run typecheck
+   npm run lint
+   ```
+3. Build bundled dist
    ```bash
    npm run build
    ```
@@ -104,16 +109,20 @@ Generate a clean, minified `dist/` folder with one JS per context:
    - dist/assets/* (copied from assets/)
    - dist/manifest.json (based on root manifest, with corrected entry paths)
 
-3. Zip the `dist/` folder
+4. Zip the `dist/` folder
    ```bash
    npm run zip
    ```
    Creates SecretsSanta-dist.zip at project root.
 
-4. Notes
+5. Notes
    - Shortcut: set Cmd+Shift+S (mac) or Ctrl+Shift+S (Windows/Linux) in chrome://extensions/shortcuts for “Open SecretsSanta”.
    - Permissions and optional host permissions are taken directly from the root manifest.json.
    - Ensure icons exist under `assets/` and paths in `manifest.json` point to them.
+   - The codebase is 100% TypeScript under `src/`. The build uses esbuild to compile TS and generate per-target bundles in `dist/`.
+   - Useful scripts:
+     - `npm run build:chromium`, `npm run build:firefox`, `npm run build:all`
+     - `npm run typecheck` (tsc --noEmit), `npm run lint` (ESLint with @typescript-eslint)
 
 ## 🧭 Build Targets
 

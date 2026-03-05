@@ -1,4 +1,4 @@
-globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
+(globalThis as any).SECRETS_SANTA = (globalThis as any).SECRETS_SANTA || {};
 
 (() => {
   const jsonModal = document.getElementById("jsonModal");
@@ -9,12 +9,12 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
   const jsonModalBody = document.getElementById("jsonModalBody");
   const jsonModalMeta = document.getElementById("jsonModalMeta");
 
-  function setJsonModalOpen(open) {
+  function setJsonModalOpen(open: boolean) {
     if (!jsonModal) return;
     jsonModal.classList.toggle("hidden", !open);
   }
 
-  function openJsonModal(title, value) {
+  function openJsonModal(title: string, value: string) {
     if (jsonModalTitle) jsonModalTitle.textContent = title || "JSON";
     if (jsonModalBody) jsonModalBody.textContent = String(value || "");
     if (jsonModalMeta) jsonModalMeta.textContent = title ? `Key: ${title}` : "";
@@ -34,5 +34,5 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     if (status) status.textContent = "Copied JSON";
   });
 
-  globalThis.SECRETS_SANTA.MODALS = { openJsonModal };
+  (globalThis as any).SECRETS_SANTA.MODALS = { openJsonModal };
 })();

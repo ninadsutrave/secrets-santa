@@ -1,31 +1,32 @@
 (() => {
-  function emitToken(t) {
+  const C: any = (globalThis as any).chrome || (window as any).chrome;
+  function emitToken(t: string) {
     try {
       window.dispatchEvent(new CustomEvent("SECRETS_SANTA_TOKEN", { detail: String(t || "") }));
     } catch { }
     try {
       const token = String(t || "");
-      if (token && typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({ type: "SET_TOKEN", token, host: location.host });
+      if (token && C && C.runtime && C.runtime.sendMessage) {
+        C.runtime.sendMessage({ type: "SET_TOKEN", token, host: location.host });
       }
     } catch { }
   }
-  function norm(h) {
+  function norm(h: any) {
     return h ? String(h) : "";
   }
-  function plausibleToken(value) {
+  function plausibleToken(value: any) {
     const v = String(value || "").trim();
     if (!v) return "";
     const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const uuidInText = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
     if (uuidLike.test(v)) return v;
     const match = v.match(uuidInText);
-    if (match?.[0] && uuidLike.test(match[0])) return match[0];
+    if ((match as any)?.[0] && uuidLike.test((match as any)[0])) return (match as any)[0];
     if (v.length < 20 || v.length > 256) return "";
     if (/\s/.test(v)) return "";
     return v;
   }
-  function keyOk(k) {
+  function keyOk(k: any) {
     const key = String(k || "").toLowerCase();
     if (!key) return false;
     const hasVendor = key.includes("consul") || key.includes("hashicorp") || key.includes("hcp");
@@ -34,7 +35,7 @@
     if (key.includes("consul") && key.includes("secret")) return true;
     return false;
   }
-  function findUuidDeep(obj, depth = 0) {
+  function findUuidDeep(obj: any, depth = 0): string {
     if (!obj || depth > 5) return "";
     if (typeof obj === "string") return plausibleToken(obj);
     if (typeof obj !== "object") return "";
@@ -53,8 +54,8 @@
   }
   function scanStorages() {
     try {
-      const candidates = [];
-      const tryAdd = (k, v) => {
+      const candidates: Array<{ value: string; score: number }> = [];
+      const tryAdd = (k: any, v: any) => {
         if (!keyOk(k)) return;
         const raw = String(v || "").trim();
         if (!raw) return;
@@ -75,22 +76,22 @@
       };
       for (let i = 0; i < localStorage.length; i += 1) {
         const k = localStorage.key(i);
-        tryAdd(k, localStorage.getItem(k));
+        tryAdd(k, localStorage.getItem(k as any));
       }
       for (let i = 0; i < sessionStorage.length; i += 1) {
         const k = sessionStorage.key(i);
-        tryAdd(k, sessionStorage.getItem(k));
+        tryAdd(k, sessionStorage.getItem(k as any));
       }
       candidates.sort((a, b) => b.score - a.score);
-      const best = candidates[0]?.value || "";
+      const best = (candidates[0] as any)?.value || "";
       if (best) {
         const suffix = "";
         fetch(`/v1/acl/token/self${suffix}`, {
           method: "GET",
           credentials: "include",
           headers: { "X-Consul-Token": best }
-        })
-          .then(async (res) => {
+        } as any)
+          .then(async (res: any) => {
             if (res && res.ok) {
               emitToken(best);
               return;
@@ -114,7 +115,7 @@
       const raw = String(document.cookie || "");
       if (!raw) return;
       const parts = raw.split(";").map((p) => p.trim());
-      const candidates = [];
+      const candidates: Array<{ value: string; score: number }> = [];
       for (const p of parts) {
         const [k, v] = p.split("=");
         if (!k || !v) continue;
@@ -128,15 +129,15 @@
         candidates.push({ value: t, score });
       }
       candidates.sort((a, b) => b.score - a.score);
-      const best = candidates[0]?.value || "";
+      const best = (candidates[0] as any)?.value || "";
       if (best) {
         const suffix = "";
         fetch(`/v1/acl/token/self${suffix}`, {
           method: "GET",
           credentials: "include",
           headers: { "X-Consul-Token": best }
-        })
-          .then(async (res) => {
+        } as any)
+          .then(async (res: any) => {
             if (res && res.ok) {
               emitToken(best);
               return;
@@ -157,7 +158,7 @@
   }
   function wrapFetch() {
     const orig = window.fetch;
-    window.fetch = function (input, init) {
+    window.fetch = function (this: any, input: any, init: any) {
       try {
         const resolveUrl = () => {
           try {
@@ -169,8 +170,8 @@
           }
         };
         const url = resolveUrl();
-        const sameOrigin = url && url.host === location.host;
-        const isConsulApi = url && url.pathname.startsWith("/v1/");
+        const sameOrigin = url && (url as any).host === location.host;
+        const isConsulApi = url && (url as any).pathname.startsWith("/v1/");
         let token = "";
         if (init && init.headers) {
           if (init.headers instanceof Headers) {
@@ -181,12 +182,12 @@
                 return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
               })();
           } else if (Array.isArray(init.headers)) {
-            const kv = init.headers.find(([k]) => String(k).toLowerCase() === "x-consul-token");
+            const kv = init.headers.find(([k]: any[]) => String(k).toLowerCase() === "x-consul-token");
             token =
-              (kv ? String(kv[1]) : "") ||
+              (kv ? String((kv as any)[1]) : "") ||
               (function () {
-                const auth = init.headers.find(([k]) => String(k).toLowerCase() === "authorization");
-                const a = auth ? String(auth[1] || "") : "";
+                const auth = init.headers.find(([k]: any[]) => String(k).toLowerCase() === "authorization");
+                const a = auth ? String((auth as any)[1] || "") : "";
                 return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
               })();
           } else if (typeof init.headers === "object") {
@@ -198,49 +199,49 @@
               })();
           }
         }
-        if (!token && input && typeof input === "object" && input.headers instanceof Headers) {
+        if (!token && input && typeof input === "object" && (input as any).headers instanceof Headers) {
           token =
-            norm(input.headers.get("X-Consul-Token") || input.headers.get("x-consul-token")) ||
+            norm((input as any).headers.get("X-Consul-Token") || (input as any).headers.get("x-consul-token")) ||
             (function () {
-              const a = String(input.headers.get("Authorization") || input.headers.get("authorization") || "");
+              const a = String((input as any).headers.get("Authorization") || (input as any).headers.get("authorization") || "");
               return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : "";
             })();
         }
         if (token && sameOrigin && isConsulApi) emitToken(token);
       } catch { }
-      return orig.apply(this, arguments);
-    };
+      return (orig as any).apply(this, arguments as any);
+    } as any;
   }
   function wrapXHR() {
     const origOpen = XMLHttpRequest.prototype.open;
     const origSet = XMLHttpRequest.prototype.setRequestHeader;
-    XMLHttpRequest.prototype.open = function () {
-      this.__ss_token = this.__ss_token || "";
+    (XMLHttpRequest.prototype as any).open = function (this: any) {
+      (this as any).__ss_token = (this as any).__ss_token || "";
       try {
         const url = arguments && typeof arguments[1] === "string" ? new URL(arguments[1], location.href) : null;
-        this.__ss_url = url && url.host === location.host ? url.pathname : "";
+        (this as any).__ss_url = url && (url as any).host === location.host ? (url as any).pathname : "";
       } catch {
-        this.__ss_url = "";
+        (this as any).__ss_url = "";
       }
-      return origOpen.apply(this, arguments);
-    };
-    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      return origOpen.apply(this, arguments as any);
+    } as any;
+    (XMLHttpRequest.prototype as any).setRequestHeader = function (this: any, name: string, value: string) {
       try {
         const lower = String(name).toLowerCase();
         if (lower === "x-consul-token" || lower === "authorization") {
-          this.__ss_token = String(value || "");
-          const isConsulApi = typeof this.__ss_url === "string" && this.__ss_url.startsWith("/v1/");
-          let t = this.__ss_token;
+          (this as any).__ss_token = String(value || "");
+          const isConsulApi = typeof (this as any).__ss_url === "string" && (this as any).__ss_url.startsWith("/v1/");
+          let t = (this as any).__ss_token;
           if (lower === "authorization" && t.toLowerCase().startsWith("bearer ")) {
             t = t.slice(7).trim();
           }
           if (t && isConsulApi) emitToken(t);
         }
       } catch { }
-      return origSet.apply(this, arguments);
-    };
+      return origSet.apply(this, arguments as any);
+    } as any;
   }
-  if (!window.__ss_bridge_installed) {
+  if (!(window as any).__ss_bridge_installed) {
     wrapFetch();
     wrapXHR();
     try {
@@ -248,8 +249,8 @@
       scanCookies();
     } catch { }
     try {
-      if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
-        chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (C && C.runtime && C.runtime.onMessage) {
+        C.runtime.onMessage.addListener((msg: any, sender: any, sendResponse: any) => {
           try {
             if (msg && msg.type === "SS_PRIME") {
               const dc = String(msg.dc || "");
@@ -257,8 +258,8 @@
               const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
               const kvPath = prefix ? `/v1/kv/${encodeURI(prefix)}` : "/v1/kv/";
               const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
-              fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => { });
-              fetch(kvUrl, { credentials: "include" }).catch(() => { });
+              fetch("/v1/agent/self" + suffix, { credentials: "include" } as any).catch(() => { });
+              fetch(kvUrl, { credentials: "include" } as any).catch(() => { });
               sendResponse({ ok: true });
               return true;
             }
@@ -273,6 +274,6 @@
         });
       }
     } catch { }
-    window.__ss_bridge_installed = true;
+    (window as any).__ss_bridge_installed = true;
   }
 })(); 

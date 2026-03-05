@@ -1,24 +1,25 @@
 /* Table rendering and inline edit for Consul KV values.
    Depends on globalThis.SECRETS_SANTA: TOKEN, ENV, MODALS.
 */
-globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
+(globalThis as any).SECRETS_SANTA = (globalThis as any).SECRETS_SANTA || {};
+const C_table: any = (globalThis as any).chrome;
 
 (() => {
-  let cfg = null;
+  let cfg: any = null;
   let currentIsDiff = false;
 
   function ensureConfig() {
     if (!cfg) throw new Error("TABLE not initialized");
   }
 
-  function isSensitiveKey(key) {
+  function isSensitiveKey(key: string) {
     ensureConfig();
     return cfg.sensitiveRegex.test(key);
   }
 
-  function buildValueActions(key, value, valueContainer, actionsContainer) {
+  function buildValueActions(key: string, value: string, valueContainer: HTMLElement, actionsContainer: HTMLElement) {
     ensureConfig();
-    const { ENV, MODALS, TOKEN } = globalThis.SECRETS_SANTA;
+    const { ENV, MODALS, TOKEN } = (globalThis as any).SECRETS_SANTA;
     const textSpan = document.createElement("span");
     textSpan.className = "value-text";
 
@@ -90,7 +91,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       actionsContainer.appendChild(editBtn);
 
       let editorOpen = false;
-      let editorBlock = null;
+      let editorBlock: HTMLElement | null = null;
       const rowEl = valueContainer.closest("tr");
 
       const closeEditor = () => {
@@ -125,7 +126,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
           }
           cfg.showLoader(true);
           try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            const [tab] = await C_table.tabs.query({ active: true, currentWindow: true });
             const tabId = tab?.id;
             if (tabId) {
               const ctx = cfg.getContext();
@@ -133,35 +134,35 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
               const prefix = prefixRaw.endsWith("/") ? prefixRaw : `${prefixRaw}/`;
               await TOKEN.ensureTokenAvailable(tabId, ctx.host, ctx.dc, prefix);
               await new Promise((resolve) =>
-                chrome.runtime.sendMessage(
+                C_table.runtime.sendMessage(
                   {
-                    type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.APPLY_ENV,
+                    type: (globalThis as any).SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.APPLY_ENV,
                     scheme: ctx.scheme,
                     host: ctx.host,
                     dc: ctx.dc,
                     prefix,
                     entries: [{ key, value: newValue }]
                   },
-                  (res) => {
+                  (res: any) => {
                     cfg.showLoader(false);
-                    if (chrome.runtime.lastError || !res || !res.ok) {
+                    if (C_table.runtime.lastError || !res || !res.ok) {
                       const msg = String(res?.error || "Failed to update key.");
                       cfg.setStatus(msg);
-                      resolve();
+                      resolve(null);
                       return;
                     }
                     cfg.onValueSaved(key, newValue);
                     value = newValue;
                     const nowSensitive = isSensitiveKey(key);
-          const pretty = ENV.getPrettyJSON(String(newValue));
-          const nowIsJSON = Boolean(pretty);
+                    const pretty = ENV.getPrettyJSON(String(newValue));
+                    const nowIsJSON = Boolean(pretty);
                     let display = "";
                     if (nowSensitive) {
                       display = ENV.mask(String(newValue));
                       textSpan.classList.add("masked");
                     } else if (nowIsJSON) {
-            display = ENV.truncate(pretty, truncationLimit);
-            formattedJSON = pretty;
+                      display = ENV.truncate(pretty, truncationLimit);
+                      formattedJSON = pretty;
                       textSpan.classList.remove("masked");
                     } else {
                       display = ENV.truncate(String(newValue), truncationLimit);
@@ -185,10 +186,10 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
                         actionsContainer.appendChild(jsonBtn);
                       }
                     } else if (existingJsonBtn) {
-                      existingJsonBtn.remove();
+                      (existingJsonBtn as HTMLElement).remove();
                     }
                     cfg.setStatus(`Updated ${key}`);
-                    resolve();
+                    resolve(null);
                   }
                 )
               );
@@ -247,7 +248,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             actionsContainer.appendChild(jsonBtn);
           }
         } else if (!visible && existingJsonBtn) {
-          existingJsonBtn.remove();
+          (existingJsonBtn as HTMLElement).remove();
         }
       });
       actionsContainer.appendChild(toggle);
@@ -268,7 +269,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     }
   }
 
-  function renderTable(data, isDiff = false) {
+  function renderTable(data: Record<string, any>, isDiff = false) {
     ensureConfig();
     const { table, tbody, savedList, intellijBtn } = cfg;
     currentIsDiff = Boolean(isDiff);
@@ -298,7 +299,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       const fragment = document.createDocumentFragment();
       const slice = entries.slice(index, index + batchSize);
       slice.forEach(([key, raw]) => {
-        const diffType = isDiff ? raw.type : null;
+        const diffType = isDiff ? (raw as any).type : null;
         const row = document.createElement("tr");
         if (diffType) row.classList.add(`diff-${diffType}`);
         const keyCell = document.createElement("td");
@@ -308,7 +309,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
         if (isDiff) {
           const wrap = document.createElement("div");
           wrap.className = "diff-values";
-          const appendLine = (label, v) => {
+          const appendLine = (label: string, v: string | undefined) => {
             const line = document.createElement("div");
             line.className = "diff-line";
             const labelEl = document.createElement("div");
@@ -334,16 +335,16 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             line.appendChild(lineActions);
             wrap.appendChild(line);
           };
-          appendLine("A", raw.aValue);
-          appendLine("B", raw.bValue);
+          appendLine("A", (raw as any).aValue);
+          appendLine("B", (raw as any).bValue);
           valueCell.appendChild(wrap);
           const tag = document.createElement("span");
           tag.className = `diff-tag diff-tag-${diffType || "changed"}`;
-          const labels = globalThis.SECRETS_SANTA.CONSTANTS.UI.DIFF_LABELS;
+          const labels = (globalThis as any).SECRETS_SANTA.CONSTANTS.UI.DIFF_LABELS;
           tag.textContent = diffType === "added" ? labels.ADDED : diffType === "removed" ? labels.REMOVED : labels.CHANGED;
           actionsCell.appendChild(tag);
         } else {
-          buildValueActions(key, raw, valueCell, actionsCell);
+          buildValueActions(key, raw as any, valueCell, actionsCell);
         }
         row.appendChild(keyCell);
         row.appendChild(valueCell);
@@ -357,7 +358,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     renderBatch();
   }
 
-  function setup(options) {
+  function setup(options: any) {
     cfg = {
       table: options.table,
       tbody: options.tbody,
@@ -376,5 +377,5 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     };
   }
 
-  globalThis.SECRETS_SANTA.TABLE = { setup, renderTable };
+  (globalThis as any).SECRETS_SANTA.TABLE = { setup, renderTable };
 })();

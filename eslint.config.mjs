@@ -3,10 +3,11 @@ export default [
         ignores: ["dist/", "node_modules/", "scripts/"],
     },
     {
-        files: ["src/**/*.js"],
+        files: ["src/**/*.ts"],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: "module",
+            parser: (await import("@typescript-eslint/parser")).default,
             globals: {
                 window: "readonly",
                 document: "readonly",
@@ -43,9 +44,16 @@ export default [
                 confirm: "readonly"
             },
         },
+        plugins: {
+            "@typescript-eslint": (await import("@typescript-eslint/eslint-plugin")).default
+        },
         rules: {
-            "no-unused-vars": "warn",
-            "no-undef": "error",
+            "no-unused-vars": "off",
+            "@typescript-eslint/no-unused-vars": ["error", {
+                "argsIgnorePattern": "^_",
+                "varsIgnorePattern": "^_",
+                "caughtErrorsIgnorePattern": "^_"
+            }],
             "semi": ["error", "always"],
             "quotes": ["error", "double", { "avoidEscape": true }]
         },

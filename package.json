@@ -10,11 +10,16 @@
     "build:all": "node scripts/build.mjs --target=all",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
+    "typecheck": "tsc --noEmit",
     "zip": "npm run build:chromium && cd dist/chromium && zip -r ../../SecretsSanta-chromium.zip . && cd ../../ && npm run build:firefox && cd dist/firefox && zip -r ../../SecretsSanta-firefox.zip .",
     "xpi:firefox": "npm run build:firefox && cd dist/firefox && zip -r ../../SecretsSanta-firefox.xpi ."
   },
   "devDependencies": {
     "esbuild": "^0.19.12",
-    "eslint": "^9.39.3"
+    "eslint": "^8.57.0",
+    "typescript": "5.5.4",
+    "@typescript-eslint/parser": "^7.18.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "chrome-types": "^0.1.258"
   }
 }

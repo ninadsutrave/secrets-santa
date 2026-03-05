@@ -2,79 +2,71 @@
    - Loads secrets for the current Consul KV page
    - Renders keys/values with masking/copy/pretty JSON
    - Saves and compares snapshots */
+const { CONSTANTS, STORAGE, TOKEN, ENV, TABLE, COLLECTIONS, COMPARE, UPLOAD } = (globalThis as any).SECRETS_SANTA;
+const C_popup: any = (globalThis as any).chrome || (window as any).chrome;
 
-const { CONSTANTS, STORAGE, TOKEN, ENV, TABLE, COLLECTIONS, COMPARE, UPLOAD } = globalThis.SECRETS_SANTA;
-
-const loadBtn = document.getElementById("loadBtn");
-const grantPermissionBtn = document.getElementById("grantPermissionBtn");
-const loadSavedBtn = document.getElementById("loadSavedBtn");
-const saveBtn = document.getElementById("saveBtn");
-const compareBtn = document.getElementById("compareBtn");
-const downloadBtn = document.getElementById("downloadBtn");
-const intellijBtn = document.getElementById("intellijBtn");
-const envFileInput = document.getElementById("envFileInput");
-const uploadKeyValuesBtn = document.getElementById("uploadKeyValuesBtn");
+const loadBtn = document.getElementById("loadBtn") as HTMLButtonElement | null;
+const grantPermissionBtn = document.getElementById("grantPermissionBtn") as HTMLButtonElement | null;
+const loadSavedBtn = document.getElementById("loadSavedBtn") as HTMLButtonElement | null;
+const saveBtn = document.getElementById("saveBtn") as HTMLButtonElement | null;
+const compareBtn = document.getElementById("compareBtn") as HTMLButtonElement | null;
+const downloadBtn = document.getElementById("downloadBtn") as HTMLButtonElement | null;
+const intellijBtn = document.getElementById("intellijBtn") as HTMLButtonElement | null;
+const envFileInput = document.getElementById("envFileInput") as HTMLInputElement | null;
+const uploadKeyValuesBtn = document.getElementById("uploadKeyValuesBtn") as HTMLButtonElement | null;
 const uploadModal = document.getElementById("uploadModal");
-const uploadModalClose = document.getElementById("uploadModalClose");
-const uploadCancelBtn = document.getElementById("uploadCancelBtn");
-const uploadConfirmBtn = document.getElementById("uploadConfirmBtn");
+const uploadModalClose = document.getElementById("uploadModalClose") as HTMLButtonElement | null;
+const uploadCancelBtn = document.getElementById("uploadCancelBtn") as HTMLButtonElement | null;
+const uploadConfirmBtn = document.getElementById("uploadConfirmBtn") as HTMLButtonElement | null;
 const uploadSummary = document.getElementById("uploadSummary");
-const uploadTabEnv = document.getElementById("uploadTabEnv");
-const uploadTabJetbrains = document.getElementById("uploadTabJetbrains");
+const uploadTabEnv = document.getElementById("uploadTabEnv") as HTMLButtonElement | null;
+const uploadTabJetbrains = document.getElementById("uploadTabJetbrains") as HTMLButtonElement | null;
 const uploadPanelEnv = document.getElementById("uploadPanelEnv");
 const uploadPanelJetbrains = document.getElementById("uploadPanelJetbrains");
-const chooseEnvFileBtn = document.getElementById("chooseEnvFileBtn");
-const envFileLabel = document.getElementById("envFileLabel");
-const jetbrainsPasteInput = document.getElementById("jetbrainsPasteInput");
+const chooseEnvFileBtn = document.getElementById("chooseEnvFileBtn") as HTMLButtonElement | null;
+const envFileLabel = document.getElementById("envFileLabel") as HTMLLabelElement | null;
+const jetbrainsPasteInput = document.getElementById("jetbrainsPasteInput") as HTMLTextAreaElement | HTMLInputElement | null;
 const table = document.getElementById("secretsTable");
-const tbody = document.getElementById("secretsBody");
-const savedList = document.getElementById("savedList");
+const tbody = document.getElementById("secretsBody") as HTMLElement | null;
+const savedList = document.getElementById("savedList") as HTMLElement | null;
 const loader = document.getElementById("loader");
-const statusDiv = document.getElementById("status");
+const statusDiv = document.getElementById("status") as HTMLElement | null;
 const searchContainer = document.getElementById("search-container");
-const searchInput = document.getElementById("search-input");
-const darkToggle = document.getElementById("dark-toggle");
+const searchInput = document.getElementById("search-input") as HTMLInputElement | null;
+const darkToggle = document.getElementById("dark-toggle") as HTMLButtonElement | null;
 const jsonModal = document.getElementById("jsonModal");
-const reviewLink = document.getElementById("reviewLink");
+const reviewLink = document.getElementById("reviewLink") as HTMLAnchorElement | null;
 
-let currentSecrets = {};
-let currentView = "table";
+let currentSecrets: Record<string, string> = {};
+let currentView: "table" | "list" = "table";
 let currentPrefix = "";
 let currentHost = "";
 let isDiffView = false;
 let comparePickerOpen = false;
 let diffLeftTitle = "";
 let diffRightTitle = "";
-let pendingConsulContext = null;
-let currentDataSource = "none";
+let pendingConsulContext: any = null;
+let currentDataSource: "none" | "page" | "saved" = "none";
 let currentScheme = "https";
 let currentDc = "";
 
 const SENSITIVE_REGEX = CONSTANTS.UI.SENSITIVE_KEY_REGEX;
 
-// Sets the user-visible status banner text at the top of the popup.
-// Pass a short, actionable message. Empty/falsey clears the banner.
-function setStatus(text) {
-  statusDiv.textContent = text || "";
+function setStatus(text: string) {
+  if (statusDiv) statusDiv.textContent = text || "";
 }
 
-// Shows or hides the global loader spinner overlay.
-// Use for short-lived background actions; keep visible time minimal.
-function showLoader(visible) {
+function showLoader(visible: boolean) {
   if (!loader) return;
   loader.classList.toggle("hidden", !visible);
 }
 
-// Ensures the search input is visible to filter the current view (table or list).
-// The actual filtering behavior is bound to the input handler below.
 function showSearch() {
   if (!searchContainer) return;
   searchContainer.classList.add("visible");
 }
 
-// Toggles visibility and enabled state of post-load controls (download, save, JetBrains).
-// Should be enabled only when a concrete set of keys is visible (table view).
-function setPostLoadVisible(visible) {
+function setPostLoadVisible(visible: boolean) {
   const controls = [downloadBtn, intellijBtn];
   controls.forEach((btn) => {
     if (!btn) return;
@@ -87,19 +79,15 @@ function setPostLoadVisible(visible) {
   }
 }
 
-// Controls the Compare button’s visibility and enabled state.
-// The button is available when there are at least 2 saved collections for the host.
-function setCompareVisible(visible, enabled = visible) {
+function setCompareVisible(visible: boolean, enabled: boolean = visible) {
   if (!compareBtn) return;
   compareBtn.classList.toggle("hidden", !visible);
   compareBtn.disabled = !enabled;
   compareBtn.textContent = comparePickerOpen ? "Cancel Compare" : "Compare";
 }
 
-// Resets the popup UI to its clean state before a new load or when switching modes.
-// Clears tables/lists, hides modals, resets state flags and UI controls.
 function resetUI() {
-  tbody.innerHTML = "";
+  if (tbody) tbody.innerHTML = "";
   if (savedList) savedList.innerHTML = "";
   if (table) table.classList.add("hidden");
   if (savedList) savedList.classList.add("hidden");
@@ -117,7 +105,7 @@ function resetUI() {
   if (searchInput) searchInput.value = "";
   if (envFileInput) envFileInput.value = "";
   if (envFileLabel) envFileLabel.textContent = "No file chosen";
-  if (jetbrainsPasteInput) jetbrainsPasteInput.value = "";
+  if (jetbrainsPasteInput) (jetbrainsPasteInput as any).value = "";
   if (uploadConfirmBtn) uploadConfirmBtn.disabled = true;
   if (uploadSummary) uploadSummary.textContent = "0 keys ready";
   if (uploadModal) uploadModal.classList.add("hidden");
@@ -132,14 +120,14 @@ TABLE.setup({
   setStatus,
   showLoader,
   getContext: () => ({ prefix: currentPrefix, host: currentHost, scheme: currentScheme, dc: currentDc }),
-  onValueSaved: (k, v) => {
+  onValueSaved: (k: string, v: string) => {
     currentSecrets[k] = v;
   },
   SENSITIVE_REGEX: SENSITIVE_REGEX,
-  setCurrentView: (view) => {
+  setCurrentView: (view: "table" | "list") => {
     currentView = view;
   },
-  setIsDiffView: (val) => {
+  setIsDiffView: (val: boolean) => {
     isDiffView = val;
   },
   getDiffLeftTitle: () => diffLeftTitle,
@@ -156,7 +144,7 @@ COLLECTIONS.setup({
   setCompareVisible,
   showSearch,
   TABLE,
-  onLoadCollection: (collection) => {
+  onLoadCollection: (collection: any) => {
     currentSecrets = collection.keys;
     currentPrefix = collection.title || "";
     currentHost = collection.host || currentHost || "";
@@ -178,20 +166,20 @@ COMPARE.setup({
   setPostLoadVisible,
   setCompareVisible,
   showSearch,
-  setCurrentView: (view) => {
+  setCurrentView: (view: "table" | "list") => {
     currentView = view;
   },
-  setIsDiffView: (val) => {
+  setIsDiffView: (val: boolean) => {
     isDiffView = val;
   },
-  setDiffTitles: (a, b) => {
+  setDiffTitles: (a: string, b: string) => {
     diffLeftTitle = a;
     diffRightTitle = b;
   },
   getDiffLeftTitle: () => diffLeftTitle,
   getDiffRightTitle: () => diffRightTitle,
   TABLE,
-  setPickerOpen: (open) => {
+  setPickerOpen: (open: boolean) => {
     comparePickerOpen = Boolean(open);
   }
 });
@@ -217,18 +205,16 @@ UPLOAD.setup({
   ENV,
   TOKEN,
   CONSTANTS,
-  onApplied: (ctx, tabId) => {
+  onApplied: (ctx: any, tabId: number) => {
     loadSecretsForContext(ctx, tabId);
   }
 });
 
-// Converts API responses into a flat key→value map.
-// Supports either array of {key,value} or a plain object already keyed by KV.
-function normalizeKeys(keys) {
+function normalizeKeys(keys: any) {
   if (!keys) return null;
   if (Array.isArray(keys)) {
-    const map = {};
-    keys.forEach((item) => {
+    const map: Record<string, string> = {};
+    keys.forEach((item: any) => {
       if (!item || !item.key) return;
       map[item.key] = item.value ?? "";
     });
@@ -238,9 +224,7 @@ function normalizeKeys(keys) {
   return null;
 }
 
-// Parses a Consul UI URL and extracts: scheme, host, datacenter, and KV prefix (with trailing slash).
-// Returns null if the URL does not resemble a Consul KV page.
-function parseConsulContext(url) {
+function parseConsulContext(url: string) {
   try {
     const u = new URL(url);
     const parts = u.pathname.split("/").filter(Boolean);
@@ -258,30 +242,23 @@ function parseConsulContext(url) {
   }
 }
 
-// Builds the optional host permission origins for a given Consul host.
-// Includes both https and http schemes to satisfy sites that downgrade.
-function getConsulOrigins(host) {
+function getConsulOrigins(host: string) {
   return [`https://${host}/*`, `http://${host}/*`];
 }
 
-// Checks whether the extension already has the required host permissions for the Consul host.
-function hasConsulHostPermission(host) {
+function hasConsulHostPermission(host: string) {
   const origins = getConsulOrigins(host);
-  return new Promise((resolve) => chrome.permissions.contains({ origins }, (has) => resolve(Boolean(has))));
+  return new Promise((resolve) => C_popup.permissions.contains({ origins }, (has: boolean) => resolve(Boolean(has))));
 }
 
-// Prompts the user to grant optional host permissions for the Consul host.
-// Resolves to true when granted, false otherwise.
-function requestConsulHostPermission(host) {
+function requestConsulHostPermission(host: string) {
   const origins = getConsulOrigins(host);
   return new Promise((resolve) =>
-    chrome.permissions.request({ origins }, (granted) => resolve(Boolean(granted)))
+    C_popup.permissions.request({ origins }, (granted: boolean) => resolve(Boolean(granted)))
   );
 }
 
-// Shows a CTA prompting the user to grant host access.
-// Stores the context so the grant action can resume loading immediately after.
-function showHostPermissionPrompt(ctx) {
+function showHostPermissionPrompt(ctx: any) {
   pendingConsulContext = ctx;
   if (grantPermissionBtn) grantPermissionBtn.classList.remove("hidden");
   setStatus(
@@ -289,69 +266,23 @@ function showHostPermissionPrompt(ctx) {
   );
 }
 
-// Hides any visible host permission CTA.
 function hideHostPermissionPrompt() {
   pendingConsulContext = null;
   if (grantPermissionBtn) grantPermissionBtn.classList.add("hidden");
 }
 
-// Attempts a heuristic token capture from local/session storage in the page context.
-// Function removed as logic lives in content scripts now
-
-/* token helpers moved to token.js */
-
-/* token functions moved to token.js */
-
-function getCollections(callback) {
+function getCollections(callback: (collections: any[]) => void) {
   STORAGE.getCollections(callback);
 }
 
-// Enables or disables the “Load Saved” button depending on host-scoped collections.
-function updateSavedAvailability() {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs?.[0];
-    const ctx = tab?.url ? parseConsulContext(tab.url) : null;
-    const host = ctx?.host || currentHost || "";
-    if (!host) {
-      loadSavedBtn.disabled = true;
-      // Allow loading even without host to support "any website" requirement
-      // But we need to know if any collections exist at all
-      COLLECTIONS.getAll((collections) => {
-        loadSavedBtn.disabled = !collections || collections.length === 0;
-      });
-      return;
-    }
-    COLLECTIONS.getAll((collections) => {
-      // If we have a host, prioritize that? Or just show all?
-      // User said "Load Saved should be cliackable on any tab"
-      // So logic: always check if ANY collection exists.
-      loadSavedBtn.disabled = !collections || collections.length === 0;
-    });
-  });
-}
-
-/* env helpers moved to env-utils.js */
-
-/* json modal moved to modals.js */
-
-/* json test moved to env-utils.js */
-
-/* buildValueActions moved to table.js */
-
-/* table rendering moved to table.js */
-
-/* compare moved to compare.js */
-
-/* collections moved to collections.js */
-
-function loadSecretsForContext(ctx, tabId, attempt = 0) {
+function loadSecretsForContext(ctx: any, tabId: number, attempt = 0) {
   setStatus("Fetching keys...");
-  chrome.runtime.sendMessage(
+  C_popup.runtime.sendMessage(
     { type: CONSTANTS.MESSAGE_TYPES.FETCH_PAGE_VALUES, scheme: ctx.scheme, host: ctx.host, dc: ctx.dc, prefix: ctx.prefix },
-    (response) => {
+    (response: any) => {
       showLoader(false);
-      if (chrome.runtime.lastError || !response) {
-        const err = chrome.runtime.lastError?.message || "Internal communication failed.";
+      if ((C_popup.runtime as any).lastError || !response) {
+        const err = (C_popup.runtime as any).lastError?.message || "Internal communication failed.";
         setStatus(`Santa says please refresh and come back. (${err})`);
         return;
       }
@@ -362,8 +293,6 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
         if (lower.includes("grab your consul session")) {
           friendly = "Santa couldn't grab your Consul session. Please interact with the Consul UI while logged in and try again!";
         } else if (lower.includes("not found")) {
-          // If the background already provided a friendly message for not found, use it.
-          // Otherwise, provide a default friendly one.
           friendly = lower.includes("santa can't find") ? message : "Santa can't find these secrets. Check the folder path or datacenter, or interact with the Consul UI to refresh your session.";
         } else if (lower.includes("santa noticed your consul session expired")) {
           friendly = "Santa noticed your Consul session expired. Please interact with the Consul UI (logged in) and try again!";
@@ -372,7 +301,6 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
         } else if (lower.includes("santa says") || lower.includes("santa couldn't") || lower.includes("santa can't")) {
           friendly = message;
         }
-
         const shouldRetry =
           attempt === 0 &&
           tabId &&
@@ -391,7 +319,6 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
         setStatus(friendly);
         return;
       }
-
       const normalized = normalizeKeys(response?.keys);
       if (!normalized || Object.keys(normalized).length === 0) {
         const skipped = Number(response?.skipped || 0);
@@ -402,7 +329,6 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
         setStatus("Santa is unable to get keys on this page.");
         return;
       }
-
       currentPrefix = response?.prefix || `/${ctx.prefix.replace(/\/$/, "")}`;
       currentSecrets = normalized;
       currentHost = ctx.host || "";
@@ -410,12 +336,10 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
       currentDc = ctx.dc || "";
       isDiffView = false;
       currentDataSource = "page";
-
       TABLE.renderTable(currentSecrets);
       setPostLoadVisible(true);
       setCompareVisible(true, true);
       showSearch();
-
       const failed = Number(response?.failed || 0);
       const skipped = Number(response?.skipped || 0);
       const parts = [`Loaded ${Object.keys(currentSecrets).length} keys`];
@@ -426,18 +350,16 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
   );
 }
 
-loadBtn.addEventListener("click", async () => {
+loadBtn?.addEventListener("click", async () => {
   resetUI();
   showLoader(true);
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await C_popup.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
     showLoader(false);
     setStatus("Unable to read current tab.");
     return;
   }
-
-  const tabUrl = tab?.url || "";
+  const tabUrl = (tab as any)?.url || "";
   const ctx = parseConsulContext(tabUrl);
   if (!ctx) {
     showLoader(false);
@@ -455,35 +377,31 @@ loadBtn.addEventListener("click", async () => {
     }
     return;
   }
-
   const allowed = await hasConsulHostPermission(ctx.host);
   if (!allowed) {
     showLoader(false);
     showHostPermissionPrompt(ctx);
     return;
   }
-
   hideHostPermissionPrompt();
   await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
   loadSecretsForContext(ctx, tab.id);
 });
 
-grantPermissionBtn.addEventListener("click", async () => {
+grantPermissionBtn?.addEventListener("click", async () => {
   const ctx = pendingConsulContext;
   if (!ctx?.host) {
-    grantPermissionBtn.classList.add("hidden");
+    grantPermissionBtn?.classList.add("hidden");
     return;
   }
-
   const granted = await requestConsulHostPermission(ctx.host);
   if (!granted) {
     setStatus("Permission denied. Santa can’t fetch keys without host access. 🎅🏻");
     return;
   }
-
   hideHostPermissionPrompt();
   showLoader(true);
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await C_popup.tabs.query({ active: true, currentWindow: true });
   if (tab?.id) {
     await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
     loadSecretsForContext(ctx, tab.id);
@@ -493,14 +411,13 @@ grantPermissionBtn.addEventListener("click", async () => {
   }
 });
 
-/* upload wiring delegated to upload.js */
 UPLOAD.wireOpenButton(uploadKeyValuesBtn, {
   parseConsulContext,
   hasHostPermission: hasConsulHostPermission,
   showHostPermissionPrompt
 });
 
-saveBtn.addEventListener("click", () => {
+saveBtn?.addEventListener("click", () => {
   if (!currentSecrets || Object.keys(currentSecrets).length === 0) {
     setStatus("No keys to save.");
     return;
@@ -513,17 +430,17 @@ saveBtn.addEventListener("click", () => {
   if (!host) host = "Unknown Host";
   getCollections((collections) => {
     const title = currentPrefix;
-    const matches = (collections || []).filter((c) => (c.title || "") === title && (c.host || "") === host);
+    const matches = (collections || []).filter((c: any) => (c.title || "") === title && (c.host || "") === host);
     const now = Date.now();
-    let next = [];
+    let next: any[] = [];
     if (matches.length === 0) {
-      const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(now);
+      const id = typeof crypto !== "undefined" && (crypto as any).randomUUID ? (crypto as any).randomUUID() : String(now);
       const collection = { id, host, title, createdAt: now, updatedAt: now, keys: currentSecrets };
       next = [...collections, collection];
     } else {
-      const keep = matches.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0];
+      const keep = matches.sort((a: any, b: any) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0];
       next = (collections || [])
-        .filter((c) => (c.id || "") !== (keep.id || ""))
+        .filter((c: any) => (c.id || "") !== (keep.id || ""))
         .concat([{ ...keep, host, title, updatedAt: now, keys: currentSecrets }]);
     }
     STORAGE.setCollections(next, () => {
@@ -533,36 +450,22 @@ saveBtn.addEventListener("click", () => {
   });
 });
 
-loadSavedBtn.addEventListener("click", () => {
+loadSavedBtn?.addEventListener("click", () => {
   setStatus("");
   resetUI();
   showLoader(true);
-
-  // We no longer require a Consul tab to load saved collections.
   getCollections((collections) => {
     showLoader(false);
     if (!collections || collections.length === 0) {
       setStatus("No saved collections found.");
-      loadSavedBtn.disabled = true;
+      if (loadSavedBtn) loadSavedBtn.disabled = true;
       return;
     }
-
-    // Group by host
-    const grouped = {};
-    collections.forEach(c => {
-      const h = c.host || "Unknown Host";
-      if (!grouped[h]) grouped[h] = [];
-      grouped[h].push(c);
-    });
-
-    COLLECTIONS.renderList(collections, true); // true for "grouped mode"
-
+    COLLECTIONS.renderList(collections, true);
     setPostLoadVisible(false);
     setCompareVisible(true, collections.length >= 2);
-    loadSavedBtn.disabled = false;
+    if (loadSavedBtn) loadSavedBtn.disabled = false;
     setStatus(`Loaded ${collections.length} collections`);
-
-    // Copy Jetbrains button visible but disabled on Load Saved page
     if (intellijBtn) {
       intellijBtn.classList.remove("hidden");
       intellijBtn.disabled = true;
@@ -570,16 +473,14 @@ loadSavedBtn.addEventListener("click", () => {
   });
 });
 
-downloadBtn.addEventListener("click", () => {
+downloadBtn?.addEventListener("click", () => {
   if (!currentSecrets || Object.keys(currentSecrets).length === 0) {
     setStatus("No keys to download.");
     return;
   }
-
   const envText = Object.entries(currentSecrets)
     .map(([key, value]) => `${key}=${ENV.formatEnvValue(value)}`)
     .join("\n");
-
   const blob = new Blob([envText], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -597,12 +498,11 @@ downloadBtn.addEventListener("click", () => {
   setStatus("Downloaded .env file.");
 });
 
-intellijBtn.addEventListener("click", () => {
+intellijBtn?.addEventListener("click", () => {
   if (!currentSecrets || Object.keys(currentSecrets).length === 0) {
     setStatus("No keys to copy.");
     return;
   }
-
   const pairs = Object.entries(currentSecrets)
     .map(([key, value]) => `${key}=${ENV.formatEnvValue(value)}`)
     .join(";");
@@ -611,52 +511,71 @@ intellijBtn.addEventListener("click", () => {
   setStatus("Copied JetBrains format.");
 });
 
-/* compare wiring delegated to compare.js */
 COMPARE.wireButton(compareBtn, {
   parseConsulContext,
   getCollections,
-  renderScopedList: (host, scoped) => {
+  renderScopedList: (host: string, scoped: any[]) => {
     currentHost = host;
     COLLECTIONS.renderList(scoped);
   },
   getCurrentView: () => currentView,
   getCurrentHost: () => currentHost,
-  setCurrentHost: (h) => {
+  setCurrentHost: (h: string) => {
     currentHost = h;
   },
   getCurrentSecrets: () => currentSecrets
 });
 
-searchInput.addEventListener("input", () => {
-  const query = searchInput.value.toLowerCase();
+searchInput?.addEventListener("input", () => {
+  const query = (searchInput?.value || "").toLowerCase();
   if (currentView === "list") {
-    const items = savedList.querySelectorAll(".saved-item");
+    const items = savedList?.querySelectorAll(".saved-item") || [];
     items.forEach((item) => {
-      const key = item.dataset.key || "";
-      item.style.display = key.includes(query) ? "" : "none";
+      const el = item as HTMLElement;
+      const key = el.dataset.key || "";
+      el.style.display = key.includes(query) ? "" : "none";
     });
   } else {
-    const rows = tbody.querySelectorAll("tr");
+    const rows = tbody?.querySelectorAll("tr") || [];
     rows.forEach((row) => {
-      const key = row.children[0].textContent.toLowerCase();
-      row.style.display = key.includes(query) ? "" : "none";
+      const el = row as HTMLElement;
+      const key = (el.children[0] as HTMLElement).textContent?.toLowerCase() || "";
+      el.style.display = key.includes(query) ? "" : "none";
     });
   }
 });
 
-darkToggle.addEventListener("click", () => {
+darkToggle?.addEventListener("click", () => {
   document.body.classList.toggle("dark");
   const isDark = document.body.classList.contains("dark");
-  darkToggle.textContent = isDark ? "☀️" : "🌙";
+  if (darkToggle) darkToggle.textContent = isDark ? "☀️" : "🌙";
   STORAGE.setDarkMode(isDark);
 });
 
-STORAGE.getDarkMode((isDark) => {
+STORAGE.getDarkMode((isDark: boolean) => {
   if (isDark) {
     document.body.classList.add("dark");
-    darkToggle.textContent = "☀️";
+    if (darkToggle) darkToggle.textContent = "☀️";
   }
 });
+
+function updateSavedAvailability() {
+  C_popup.tabs.query({ active: true, currentWindow: true }, (tabs: any[]) => {
+    const tab = tabs?.[0];
+    const ctx = (tab as any)?.url ? parseConsulContext((tab as any).url) : null;
+    const host = (ctx as any)?.host || currentHost || "";
+    if (!host) {
+      if (loadSavedBtn) loadSavedBtn.disabled = true;
+      COLLECTIONS.getAll((collections: any[]) => {
+        if (loadSavedBtn) loadSavedBtn.disabled = !collections || collections.length === 0;
+      });
+      return;
+    }
+    COLLECTIONS.getAll((collections: any[]) => {
+      if (loadSavedBtn) loadSavedBtn.disabled = !collections || collections.length === 0;
+    });
+  });
+}
 
 updateSavedAvailability();
 
@@ -672,28 +591,27 @@ if (reviewLink) {
   reviewLink.href = url || "https://github.com/ninadsutrave/secrets-santa";
 }
 
-// Global tooltip handler
-const globalTooltip = document.getElementById("globalTooltip");
-let tooltipTimeout;
+const globalTooltip = document.getElementById("globalTooltip") as HTMLElement | null;
+let tooltipTimeout: any;
 
 function updateStatusOpaque() {
   const doc = document.documentElement;
-  const scrollTop = window.pageYOffset || doc.scrollTop || 0;
+  const scrollTop = (window.pageYOffset || (doc as any).scrollTop || 0);
   if (statusDiv) statusDiv.classList.toggle("status-opaque", scrollTop > 0);
 }
 
-window.addEventListener("scroll", updateStatusOpaque, { passive: true });
+window.addEventListener("scroll", updateStatusOpaque, { passive: true } as any);
 window.addEventListener("resize", updateStatusOpaque);
 updateStatusOpaque();
-function willOverflow(left, top, tipRect, containerRect) {
-  if (left < containerRect.left + 2) return true;
-  if (left + tipRect.width > containerRect.right - 2) return true;
-  if (top < containerRect.top + 2) return true;
-  if (top + tipRect.height > containerRect.bottom - 2) return true;
+function willOverflow(left: number, top: number, tipRect: DOMRect, containerRect: DOMRect) {
+  if (left < (containerRect.left + 2)) return true;
+  if (left + tipRect.width > (containerRect.right - 2)) return true;
+  if (top < (containerRect.top + 2)) return true;
+  if (top + tipRect.height > (containerRect.bottom - 2)) return true;
   return false;
 }
 
-function computeTooltipPosition(targetRect, tipRect, containerRect) {
+function computeTooltipPosition(targetRect: DOMRect, tipRect: DOMRect, containerRect: DOMRect) {
   const offset = 6;
   let top = targetRect.bottom + offset;
   let left = targetRect.left + targetRect.width / 2 - tipRect.width / 2;
@@ -730,8 +648,8 @@ function computeTooltipPosition(targetRect, tipRect, containerRect) {
   return { top, left };
 }
 
-document.body.addEventListener("mouseover", (e) => {
-  const target = e.target.closest("[data-tip]");
+document.body.addEventListener("mouseover", (e: any) => {
+  const target = (e.target as HTMLElement).closest("[data-tip]") as HTMLElement | null;
   if (!target) {
     if (globalTooltip) {
       globalTooltip.classList.remove("visible");
@@ -739,22 +657,20 @@ document.body.addEventListener("mouseover", (e) => {
     }
     return;
   }
-
   const tipText = target.getAttribute("data-tip");
   if (!tipText) return;
-
   clearTimeout(tooltipTimeout);
   if (globalTooltip) {
     globalTooltip.textContent = tipText;
     const rect = target.getBoundingClientRect();
-    const container = document.querySelector(".container");
+    const container = document.querySelector(".container") as HTMLElement | null;
     const containerRect = container
       ? container.getBoundingClientRect()
-      : { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
+      : { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight } as any;
     globalTooltip.classList.remove("hidden");
     globalTooltip.classList.add("visible");
     const tooltipRect = globalTooltip.getBoundingClientRect();
-    const pos = computeTooltipPosition(rect, tooltipRect, containerRect);
+    const pos = computeTooltipPosition(rect, tooltipRect, containerRect as DOMRect);
     globalTooltip.style.top = `${pos.top}px`;
     globalTooltip.style.left = `${pos.left}px`;
     globalTooltip.classList.remove("hidden");
@@ -762,24 +678,26 @@ document.body.addEventListener("mouseover", (e) => {
   }
 });
 
-document.body.addEventListener("mouseout", (e) => {
-  const target = e.target.closest("[data-tip]");
+document.body.addEventListener("mouseout", (e: any) => {
+  const target = (e.target as HTMLElement).closest("[data-tip]");
   if (target && globalTooltip) {
     globalTooltip.classList.remove("visible");
     globalTooltip.classList.add("hidden");
   }
 });
 
-document.body.addEventListener("mousemove", (e) => {
-  const target = e.target.closest("[data-tip]");
+document.body.addEventListener("mousemove", (e: any) => {
+  const target = (e.target as HTMLElement).closest("[data-tip]") as HTMLElement | null;
   if (!target || !globalTooltip || !globalTooltip.classList.contains("visible")) return;
   const rect = target.getBoundingClientRect();
-  const container = document.querySelector(".container");
+  const container = document.querySelector(".container") as HTMLElement | null;
   const containerRect = container
     ? container.getBoundingClientRect()
-    : { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
+    : { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight } as any;
   const tooltipRect = globalTooltip.getBoundingClientRect();
-  const pos = computeTooltipPosition(rect, tooltipRect, containerRect);
+  const pos = computeTooltipPosition(rect, tooltipRect, containerRect as DOMRect);
   globalTooltip.style.top = `${pos.top}px`;
   globalTooltip.style.left = `${pos.left}px`;
 });
+
+export {};

@@ -13,7 +13,7 @@ const src = {
   popupJs: path.join(root, "src/popup/popup.js"),
   popupModules: path.join(root, "src/popup/modules"),
   shared: path.join(root, "src/shared"),
-  background: path.join(root, "src/background/background.js"),
+  background: path.join(root, "src/background/background.ts"),
   assets: path.join(root, "assets"),
   manifest: path.join(root, "manifest.json")
 };
@@ -100,7 +100,7 @@ async function buildPopupBundle(dist, target) {
   // Use esbuild bundler to preserve module order via modules/index.js
   await ensureDir(path.dirname(dist.popupJs));
   await esbuild.build({
-    entryPoints: [path.join(src.popupModules, "index.js")],
+    entryPoints: [path.join(src.popupModules, "index.ts")],
     bundle: true,
     minify: true,
     target: target === "firefox" ? "firefox115" : "chrome116",
@@ -110,27 +110,39 @@ async function buildPopupBundle(dist, target) {
 }
 
 async function buildBackgroundBundle(dist, target) {
-  const order = [
-    path.join(src.shared, "constants.js"),
-    path.join(src.shared, "storage.js"),
-    path.join(src.shared, "consul.js"),
-    src.background
+  // Transform shared TS files first and prepend via banner
+  const sharedFiles = [
+    path.join(src.shared, "constants.ts"),
+    path.join(src.shared, "storage.ts"),
+    path.join(src.shared, "consul.ts")
   ];
-  let combined = "";
-  for (const p of order) {
-    let code = await fs.readFile(p, "utf8");
-    // Strip importScripts calls in background to avoid double-inclusion
-    if (p === src.background) {
-      code = code.replace(/importScripts\([^)]*\);?/g, "");
-    }
-    combined += `\n${code}\n`;
+  let banner = "";
+  for (const p of sharedFiles) {
+    const ts = await fs.readFile(p, "utf8");
+    const js = await esbuild.transform(ts, {
+      loader: "ts",
+      minify: target !== "firefox",
+      target: target === "firefox" ? "firefox128" : "chrome116"
+    });
+    banner += `\n${js.code}\n`;
   }
-  const result = await esbuild.transform(combined, {
-    loader: "js",
-    minify: target !== "firefox", // Firefox background can be sensitive to minification
-    target: target === "firefox" ? "firefox128" : "chrome116"
+  // Read background and strip importScripts calls
+  const bgTsRaw = await fs.readFile(src.background, "utf8");
+  const bgTs = bgTsRaw.replace(/^\s*importScripts\([^)]*\);\s*/gm, "");
+  // Build background TS with banner
+  await esbuild.build({
+    stdin: {
+      contents: bgTs,
+      resolveDir: path.dirname(src.background),
+      sourcefile: "background.ts",
+      loader: "ts"
+    },
+    bundle: false,
+    minify: target !== "firefox",
+    target: target === "firefox" ? "firefox128" : "chrome116",
+    banner: { js: banner },
+    outfile: dist.background
   });
-  await fs.writeFile(dist.background, result.code, "utf8");
 }
 
 async function writePopupHtml(dist) {
@@ -205,8 +217,16 @@ async function buildTarget(target) {
   await writePopupHtml(dist);
   await writeManifest(dist, target);
   if (target === "firefox") {
-    // copy content script
-    await fs.copyFile(path.join(root, "src/content/consul-token-bridge.js"), path.join(dist.content, "consul-token-bridge.js")).catch(() => { });
+    await esbuild.build({
+      entryPoints: [path.join(root, "src/content/consul-token-bridge.ts")],
+      bundle: false,
+      minify: false,
+      target: "firefox128",
+      outfile: path.join(dist.content, "consul-token-bridge.js")
+    }).catch(async () => {
+      // fallback if TS not present: copy JS
+      await fs.copyFile(path.join(root, "src/content/consul-token-bridge.js"), path.join(dist.content, "consul-token-bridge.js")).catch(() => { });
+    });
   }
   console.log(`Dist built at: ${dist.root}`);
 }

@@ -1,23 +1,12 @@
 /* Upload module: handles .env/JetBrains uploads with a dry-run summary and apply. */
-globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
+(globalThis as any).SECRETS_SANTA = (globalThis as any).SECRETS_SANTA || {};
+const C: any = (globalThis as any).chrome;
 
 (() => {
-  let cfg = null;
-  let pending = null;
+  let cfg: any = null;
+  let pending: any = null;
 
-  /**
-   * Initializes the upload module with DOM references and helpers.
-   * options:
-   * - elements: { uploadModal, uploadModalClose, uploadCancelBtn, uploadConfirmBtn, uploadSummary,
-   *               uploadTabEnv, uploadTabJetbrains, uploadPanelEnv, uploadPanelJetbrains,
-   *               chooseEnvFileBtn, envFileInput, envFileLabel, jetbrainsPasteInput }
-   * - setStatus, showLoader
-   * - ENV: utilities for parsing formats
-   * - TOKEN: token acquisition helper
-   * - CONSTANTS: message types/headers
-   * - onApplied(ctx, tabId): callback to reload after apply
-   */
-  function setup(options) {
+  function setup(options: any) {
     cfg = {
       elements: options.elements,
       setStatus: options.setStatus,
@@ -45,13 +34,13 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     el.uploadConfirmBtn?.addEventListener("click", onConfirm);
   }
 
-  function setOpen(open) {
+  function setOpen(open: boolean) {
     const el = cfg.elements;
     if (!el.uploadModal) return;
     el.uploadModal.classList.toggle("hidden", !open);
   }
 
-  function setTab(tab) {
+  function setTab(tab: "env" | "jetbrains") {
     const el = cfg.elements;
     const isEnv = tab === "env";
     el.uploadTabEnv?.classList.toggle("active", isEnv);
@@ -81,7 +70,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     const file = el.envFileInput?.files?.[0];
     if (!file) return;
     if (!pending?.ctx || !pending?.tabId) return;
-    file.text().then((text) => {
+    file.text().then((text: string) => {
       const parsed = cfg.ENV.parseDotEnv(text);
       pending.entries = parsed.entries;
       pending.fileName = file.name || "";
@@ -115,7 +104,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     cfg.showLoader(true);
     if (el.uploadConfirmBtn) el.uploadConfirmBtn.disabled = true;
     cfg.TOKEN.ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix).then(() => {
-      chrome.runtime.sendMessage(
+      C.runtime.sendMessage(
         {
           type: cfg.CONSTANTS.MESSAGE_TYPES.APPLY_ENV,
           scheme: ctx.scheme,
@@ -124,10 +113,10 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
           prefix: ctx.prefix,
           entries
         },
-        (res) => {
+        (res: any) => {
           cfg.showLoader(false);
           if (el.uploadConfirmBtn) el.uploadConfirmBtn.disabled = false;
-          if (chrome.runtime.lastError || !res) {
+          if (C.runtime.lastError || !res) {
             cfg.setStatus("Failed to upload key values.");
             return;
           }
@@ -143,10 +132,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     });
   }
 
-  /**
-   * Opens the upload modal for a given context and tab id.
-   */
-  function open(ctx, tabId) {
+  function open(ctx: any, tabId: number) {
     const el = cfg.elements;
     pending = { ctx, tabId, source: "env", entries: [], fileName: "" };
     if (el.envFileInput) el.envFileInput.value = "";
@@ -157,22 +143,15 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     setOpen(true);
   }
 
-  /**
-   * Closes and clears the modal state.
-   */
   function close() {
     pending = null;
     setOpen(false);
   }
 
-  /**
-   * Wires the top-level "Upload Key Values" button. Requires:
-   * deps: { button, parseConsulContext, hasHostPermission(host) -> Promise<bool>, showHostPermissionPrompt(ctx) }
-   */
-  function wireOpenButton(button, deps) {
+  function wireOpenButton(button: HTMLElement | null, deps: any) {
     if (!button) return;
     button.addEventListener("click", async () => {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const [tab] = await C.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) {
         cfg.setStatus("Unable to read current tab.");
         return;
@@ -192,5 +171,5 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     });
   }
 
-  globalThis.SECRETS_SANTA.UPLOAD = { setup, open, close, wireOpenButton };
+  (globalThis as any).SECRETS_SANTA.UPLOAD = { setup, open, close, wireOpenButton };
 })();

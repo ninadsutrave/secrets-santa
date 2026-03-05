@@ -1,25 +1,12 @@
 /* Collections module: listing, loading, and deleting saved collections for a host.
    Exposes COLLECTIONS.setup and COLLECTIONS.renderList, COLLECTIONS.deleteById, COLLECTIONS.getAll.
 */
-globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
+(globalThis as any).SECRETS_SANTA = (globalThis as any).SECRETS_SANTA || {};
 
 (() => {
-  let cfg = null;
+  let cfg: any = null;
 
-  /**
-   * Initializes the collections module with required dependencies and callbacks.
-   * options:
-   * - savedList: UL element to render saved collections
-   * - table: main table element (used to hide/show)
-   * - STORAGE: shared storage facade
-   * - setStatus(text): function to set status text
-   * - setPostLoadVisible(bool): toggle post-load controls
-   * - setCompareVisible(visible, enabled): toggle compare button
-   * - showSearch(): show search box
-   * - TABLE: table module (to render key/value table)
-   * - onLoadCollection(collection): callback when a collection is selected
-   */
-  function setup(options) {
+  function setup(options: any) {
     cfg = {
       savedList: options.savedList,
       table: options.table,
@@ -33,17 +20,11 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     };
   }
 
-  /**
-   * Fetches all saved collections from storage.
-   */
-  function getAll(callback) {
+  function getAll(callback: (collections: any[]) => void) {
     cfg.STORAGE.getCollections(callback);
   }
 
-  /**
-   * Deletes a collection by id and re-renders the list.
-   */
-  function deleteById(id, afterRenderHost) {
+  function deleteById(id: string, afterRenderHost: string | null) {
     getAll((collections) => {
       const next = (collections || []).filter((item) => (item.id || "") !== (id || ""));
       cfg.STORAGE.setCollections(next, () => {
@@ -59,11 +40,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     });
   }
 
-  /**
-   * Renders a list of collections and wires item interactions.
-   * Selecting an item loads the collection via onLoadCollection.
-   */
-  function renderList(collections, groupedMode = false) {
+  function renderList(collections: any[], groupedMode = false) {
     const { savedList, table } = cfg;
     if (!savedList) return;
     savedList.innerHTML = "";
@@ -72,16 +49,14 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
     const fragment = document.createDocumentFragment();
 
-    // Sort logic
-    const sortFn = (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+    const sortFn = (a: any, b: any) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
 
     let listToRender = collections || [];
     if (!groupedMode) {
       listToRender.sort(sortFn);
       renderItems(listToRender, fragment, false);
     } else {
-      // Group by host
-      const grouped = {};
+      const grouped: Record<string, any[]> = {};
       listToRender.forEach(c => {
         const h = c.host || "Unknown Host";
         if (!grouped[h]) grouped[h] = [];
@@ -103,7 +78,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     savedList.appendChild(fragment);
   }
 
-  function renderItems(items, fragment, groupedMode) {
+  function renderItems(items: any[], fragment: DocumentFragment, groupedMode: boolean) {
     const { onLoadCollection } = cfg;
     items.forEach((collection) => {
       const item = document.createElement("li");
@@ -134,10 +109,6 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       del.addEventListener("click", (event) => {
         event.stopPropagation();
         deleteById(collection.id, groupedMode ? null : collection.host);
-        // If grouped mode, we reload all. If not, we reload scoped.
-        // Actually deleteById currently reloads ALL from storage and then filters if afterRenderHost is set.
-        // We should fix deleteById to handle the refresh logic better or pass a callback.
-        // For now let's just let it re-render.
       });
 
       actions.appendChild(del);
@@ -157,5 +128,5 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     });
   }
 
-  globalThis.SECRETS_SANTA.COLLECTIONS = { setup, renderList, deleteById, getAll };
+  (globalThis as any).SECRETS_SANTA.COLLECTIONS = { setup, renderList, deleteById, getAll };
 })();

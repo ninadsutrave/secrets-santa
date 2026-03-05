@@ -1,24 +1,16 @@
 /* Compare module: build diffs and render a picker to choose two collections.
    Also wires the top-level Compare button with provided helpers. */
-globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
+(globalThis as any).SECRETS_SANTA = (globalThis as any).SECRETS_SANTA || {};
+declare const chrome: any;
 
 (() => {
-  let cfg = null;
-  let state = {
+  let cfg: any = null;
+  let state: { pickerOpen: boolean; selectedIds: string[] } = {
     pickerOpen: false,
     selectedIds: []
   };
 
-  /**
-   * Initializes compare module.
-   * options:
-   * - savedList: list element to render the picker
-   * - setStatus, setPostLoadVisible, setCompareVisible, showSearch
-   * - setCurrentView(view), setIsDiffView(bool)
-   * - get/set diff titles: setDiffTitles(a, b), getDiffLeftTitle(), getDiffRightTitle()
-   * - TABLE: table module to render diffs
-   */
-  function setup(options) {
+  function setup(options: any) {
     cfg = {
       savedList: options.savedList,
       table: options.table,
@@ -37,13 +29,10 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     };
   }
 
-  /**
-   * Pure function to build a diff map of keys between A and B.
-   */
-  function buildDiff(aKeys, bKeys) {
+  function buildDiff(aKeys: Record<string, string> | undefined, bKeys: Record<string, string> | undefined) {
     const a = aKeys || {};
     const b = bKeys || {};
-    const diff = {};
+    const diff: Record<string, { aValue: string | undefined; bValue: string | undefined; type: "added" | "changed" | "removed" }> = {};
     for (const key in b) {
       if (!(key in a)) {
         diff[key] = { aValue: undefined, bValue: b[key], type: "added" };
@@ -59,10 +48,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     return diff;
   }
 
-  /**
-   * Renders the picker UI to choose two collections (A then B) and shows the diff.
-   */
-  function renderPicker(collections, getSelectedIds, setSelectedIds) {
+  function renderPicker(collections: any[], getSelectedIds: () => string[], setSelectedIds: (ids: string[]) => void) {
     const { savedList, TABLE, table, intellijBtn } = cfg;
     if (!savedList) return;
     savedList.innerHTML = "";
@@ -134,9 +120,9 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             cfg.setIsDiffView(true);
             TABLE.renderTable(diff, true);
             const counts = { added: 0, changed: 0, removed: 0 };
-            Object.values(diff).forEach((item) => {
+            Object.values(diff).forEach((item: any) => {
               if (!item || !item.type) return;
-              if (counts[item.type] !== undefined) counts[item.type] += 1;
+              if ((counts as any)[item.type] !== undefined) (counts as any)[item.type] += 1;
             });
             cfg.setStatus(
               `Comparing A (${left.title || "A"}) → B (${right.title || "B"}) · ${Object.keys(diff).length} differences (added ${counts.added}, changed ${counts.changed}, removed ${counts.removed})`
@@ -153,18 +139,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     savedList.appendChild(fragment);
   }
 
-  /**
-   * Wires the top-level Compare button, delegating host-scoped list fetching and parsing.
-   * deps:
-   * - button: the Compare button element
-   * - parseConsulContext(url)
-   * - getCollections(cb)
-   * - renderScopedList(host, collections)
-   * - getCurrentView()
-   * - getCurrentHost(), setCurrentHost(host)
-   * - getCurrentSecrets()
-   */
-  function wireButton(button, deps) {
+  function wireButton(button: HTMLElement | null, deps: any) {
     if (!button) return;
     button.addEventListener("click", () => {
       if (state.pickerOpen) {
@@ -181,7 +156,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
         return;
       }
 
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs: any[]) => {
         const tab = tabs?.[0];
         const ctx = tab?.url ? deps.parseConsulContext(tab.url) : null;
         const host = ctx?.host || deps.getCurrentHost() || "";
@@ -190,7 +165,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
           cfg.setCompareVisible(true, false);
           return;
         }
-        deps.getCollections((collections) => {
+        deps.getCollections((collections: any[]) => {
           const scoped = (collections || []).filter((c) => (c.host || "") === host);
           if (scoped.length < 2) {
             cfg.setStatus("Need at least 2 saved collections to compare.");
@@ -217,5 +192,5 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     });
   }
 
-  globalThis.SECRETS_SANTA.COMPARE = { setup, buildDiff, renderPicker, wireButton };
+  (globalThis as any).SECRETS_SANTA.COMPARE = { setup, buildDiff, renderPicker, wireButton };
 })();

@@ -1,11 +1,10 @@
-globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
+(globalThis as any).SECRETS_SANTA = (globalThis as any).SECRETS_SANTA || {};
 
 (() => {
-  function isLikelyJSON(value) {
+  function isLikelyJSON(value: unknown): boolean {
     if (typeof value !== "string") return false;
     let trimmed = value.trim();
     if (!trimmed) return false;
-    // Direct object/array
     if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
       try {
         const parsed = JSON.parse(trimmed);
@@ -14,7 +13,6 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
         return false;
       }
     }
-    // Quoted JSON (string containing JSON)
     if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
       try {
         const inner = JSON.parse(trimmed);
@@ -30,7 +28,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     return false;
   }
 
-  function getPrettyJSON(value) {
+  function getPrettyJSON(value: unknown): string {
     try {
       let str = String(value || "");
       let trimmed = str.trim();
@@ -49,7 +47,6 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       if (startObj !== -1 && startArr !== -1) start = Math.min(startObj, startArr);
       else start = startObj !== -1 ? startObj : startArr;
       if (start === -1) return "";
-      // Extract the first valid JSON segment using bracket matching
       let depth = 0;
       let inString = false;
       let stringQuote = "";
@@ -89,7 +86,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     }
   }
 
-  function formatEnvValue(value) {
+  function formatEnvValue(value: unknown): string {
     if (value === null || value === undefined) return "";
     const str = String(value);
     const needsQuoting = /[\s#;"']/g.test(str) || /\r|\n/.test(str) || isLikelyJSON(str);
@@ -103,19 +100,19 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     return `"${escaped}"`;
   }
 
-  function truncate(str, max = 80) {
+  function truncate(str: string, max = 80): string {
     if (!str) return "";
     if (str.length <= max) return str;
     return str.slice(0, max) + "...";
   }
 
-  function mask(value) {
+  function mask(value: unknown): string {
     return "•".repeat(Math.min(String(value).length, 12));
   }
 
-  function parseDotEnv(text) {
+  function parseDotEnv(text: string): { entries: Array<{ key: string; value: string }>; skipped: number } {
     const lines = String(text || "").split(/\r?\n/);
-    const entries = [];
+    const entries: Array<{ key: string; value: string }> = [];
     let skipped = 0;
     lines.forEach((raw) => {
       const line = String(raw || "").trim();
@@ -153,11 +150,11 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     return { entries, skipped };
   }
 
-  function parseJetBrainsPairs(text) {
+  function parseJetBrainsPairs(text: string): { entries: Array<{ key: string; value: string }>; skipped: number } {
     const raw = String(text || "").trim();
     if (!raw) return { entries: [], skipped: 0 };
     const parts = raw.split(";");
-    const entries = [];
+    const entries: Array<{ key: string; value: string }> = [];
     let skipped = 0;
     parts.forEach((p) => {
       const part = String(p || "").trim();
@@ -178,7 +175,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     return { entries, skipped };
   }
 
-  globalThis.SECRETS_SANTA.ENV = {
+  (globalThis as any).SECRETS_SANTA.ENV = {
     formatEnvValue,
     truncate,
     mask,

@@ -1,8 +1,7 @@
 /* Consul KV helpers used by the background service worker. */
+(globalThis as any).SECRETS_SANTA = (globalThis as any).SECRETS_SANTA || {};
 
-globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
-
-function decodeBase64Utf8(b64) {
+function decodeBase64Utf8(b64: string) {
   if (!b64) return "";
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -12,12 +11,12 @@ function decodeBase64Utf8(b64) {
   return new TextDecoder().decode(bytes);
 }
 
-function buildKvValueUrl({ scheme = "https", host, dc, fullKey }) {
+function buildKvValueUrl({ scheme = "https", host, dc, fullKey }: { scheme?: string; host: string; dc: string; fullKey: string }) {
   const s = String(scheme || "https").replace(":", "");
   return `${s}://${host}/v1/kv/${encodeURI(fullKey)}?dc=${encodeURIComponent(dc)}`;
 }
 
-function buildKvListKeysUrl({ scheme = "https", host, dc, prefix }) {
+function buildKvListKeysUrl({ scheme = "https", host, dc, prefix }: { scheme?: string; host: string; dc: string; prefix: string }) {
   const p = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
   const s = String(scheme || "https").replace(":", "");
   const base = p ? `/v1/kv/${encodeURI(p)}` : "/v1/kv/";
@@ -25,12 +24,12 @@ function buildKvListKeysUrl({ scheme = "https", host, dc, prefix }) {
   return `${s}://${host}${base}?keys&dc=${encodeURIComponent(dc)}&separator=${sep}`;
 }
 
-function buildKvPutUrl({ scheme = "https", host, dc, fullKey }) {
+function buildKvPutUrl({ scheme = "https", host, dc, fullKey }: { scheme?: string; host: string; dc: string; fullKey: string }) {
   const s = String(scheme || "https").replace(":", "");
   return `${s}://${host}/v1/kv/${encodeURI(fullKey)}?dc=${encodeURIComponent(dc)}`;
 }
 
-globalThis.SECRETS_SANTA.CONSUL = {
+(globalThis as any).SECRETS_SANTA.CONSUL = {
   decodeBase64Utf8,
   buildKvValueUrl,
   buildKvListKeysUrl,
