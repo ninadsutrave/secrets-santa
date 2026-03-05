@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "SecretsSanta",
-  "description": "Securely view, save, edit and compare Consul KV secrets.",
+  "name": "Consul KV Viewer - SecretsSanta",
+  "description": "View, edit, and compare HashiCorp Consul KV secrets securely in your browser.",
   "homepage_url": "https://ninadsutrave.in",
   "author": {
     "name": "Ninad Sutrave",
