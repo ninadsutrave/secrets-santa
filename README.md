@@ -20,12 +20,12 @@ This is an open source initiative designed to make Consul KV management smoother
 
 SecretsSanta works on all Chromium-based browsers and Firefox.
 
-- **Chrome**: [Install from Web Store](https://chrome.google.com/webstore/detail/secretssanta/placeholder)
+- **Chrome**: [Install from Web Store](https://chromewebstore.google.com/detail/secretssanta/mfppamekfnjjnpgfpjhdgomnpobadhfe)
 - **Brave**: Compatible via Chrome Web Store.
-- **Edge**: [Install from Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/placeholder)
-- **Firefox**: [Install from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/secretssanta/placeholder)
+- **Edge**: [Install from Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/secretssanta/pjkphinghfbmakbabohbaklnbplgmcbk)
+- **Firefox**: [Install from Firefox Add-ons](https://addons.mozilla.org/en-GB/firefox/addon/secretssanta-consul-kv-manager)
 
-*(Note: Store links are placeholders until published. You can install manually using the steps below.)*
+*(If a store link is temporarily unavailable in your region, install manually using the steps below.)*
 
 ## 🔗 Project Links
 
