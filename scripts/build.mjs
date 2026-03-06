@@ -197,7 +197,6 @@ async function buildTarget(target) {
   await rimraf(dist.root);
   await ensureDir(dist.root);
   await ensureDir(dist.assets);
-  await ensureDir(dist.content);
   await copyDir(src.assets, dist.assets).catch(() => { });
   await buildCss(dist);
   await buildPopupBundle(dist, target);
@@ -205,6 +204,7 @@ async function buildTarget(target) {
   await writePopupHtml(dist);
   await writeManifest(dist, target);
   if (target === "firefox") {
+    await ensureDir(dist.content);
     // copy content script
     await fs.copyFile(path.join(root, "src/content/consul-token-bridge.js"), path.join(dist.content, "consul-token-bridge.js")).catch(() => { });
   }
