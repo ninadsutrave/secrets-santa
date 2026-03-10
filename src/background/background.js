@@ -612,12 +612,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === CONSTANTS.MESSAGE_TYPES.FETCH_VISIBLE_VALUES) {
-    fetchVisibleValues(message).then(sendResponse).catch(() => sendResponse({ error: "Failed to fetch keys." }));
+    fetchVisibleValues(message)
+      .then(sendResponse)
+      .catch(() => sendResponse({ error: "Santa couldn't fetch keys. Please check your connection and try again." }));
     return true;
   }
 
   if (message?.type === CONSTANTS.MESSAGE_TYPES.FETCH_PAGE_VALUES) {
-    fetchPageValues(message).then(sendResponse).catch(() => sendResponse({ error: "Failed to fetch keys." }));
+    fetchPageValues(message)
+      .then(sendResponse)
+      .catch(() => sendResponse({ error: "Santa couldn't fetch keys. Please check your connection and try again." }));
     return true;
   }
 });
