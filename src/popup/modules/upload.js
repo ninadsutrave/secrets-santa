@@ -110,8 +110,6 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     const entries = upload?.entries;
     if (!ctx || !tabId || !Array.isArray(entries) || entries.length === 0) return;
     const target = `/${String(ctx.prefix || "").replace(/\/$/, "")}`;
-    const ok = confirm(`Upload ${entries.length} keys to ${ctx.host}${target}? This will create/update values.`);
-    if (!ok) return;
     cfg.showLoader(true);
     if (el.uploadConfirmBtn) el.uploadConfirmBtn.disabled = true;
     cfg.TOKEN.ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix).then(() => {
@@ -128,15 +126,15 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
           cfg.showLoader(false);
           if (el.uploadConfirmBtn) el.uploadConfirmBtn.disabled = false;
           if (chrome.runtime.lastError || !res) {
-            cfg.setStatus("Failed to upload key values.");
+            cfg.setStatus("Santa couldn't upload the key values. Please try again.");
             return;
           }
           if (!res.ok) {
-            cfg.setStatus(String(res.error || "Failed to upload key values."));
+            cfg.setStatus(String(res.error || "Santa couldn't upload the key values. Please try again."));
             return;
           }
           close();
-          cfg.setStatus(`Uploaded ${Number(res.applied || 0)} keys to ${target}`);
+          cfg.setStatus(`Santa uploaded ${Number(res.applied || 0)} keys to ${target}.`);
           cfg.onApplied(ctx, tabId);
         }
       );
@@ -174,7 +172,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     button.addEventListener("click", async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) {
-        cfg.setStatus("Unable to read current tab.");
+        cfg.setStatus("Santa couldn't read the current tab. Please try again.");
         return;
       }
       const tabUrl = tab?.url || "";

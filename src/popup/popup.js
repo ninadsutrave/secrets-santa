@@ -166,7 +166,7 @@ COLLECTIONS.setup({
     setPostLoadVisible(true);
     setCompareVisible(true, true);
     showSearch();
-    setStatus(`Loaded ${Object.keys(currentSecrets).length} keys`);
+    setStatus(`Santa loaded ${Object.keys(currentSecrets).length} keys.`);
   }
 });
 
@@ -240,6 +240,10 @@ function normalizeKeys(keys) {
 
 // Parses a Consul UI URL and extracts: scheme, host, datacenter, and KV prefix (with trailing slash).
 // Returns null if the URL does not resemble a Consul KV page.
+//
+// Consul UI URL formats:
+//   With DC:    /ui/<dc>/kv/<prefix>   e.g. /ui/dc1/kv/myapp/config
+//   Without DC: /ui/kv/<prefix>        e.g. /ui/kv/myapp/config  (uses default datacenter)
 function parseConsulContext(url) {
   try {
     const u = new URL(url);
@@ -247,10 +251,12 @@ function parseConsulContext(url) {
     const uiIndex = parts.indexOf("ui");
     const kvIndex = parts.indexOf("kv");
     if (uiIndex === -1 || kvIndex === -1) return null;
-    const dc = parts[uiIndex + 1] || "";
+    // DC is present only when "kv" is not immediately after "ui" (kvIndex > uiIndex + 1).
+    // e.g. ["ui","dc1","kv","path"] → dc="dc1"
+    //      ["ui","kv","path"]       → dc="" (default datacenter)
+    const dc = (kvIndex > uiIndex + 1) ? (parts[uiIndex + 1] || "") : "";
     const prefix = parts.slice(kvIndex + 1).join("/");
     const scheme = String(u.protocol || "").replace(":", "") || "https";
-    if (!dc) return null;
     const normalizedPrefix = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
     return { scheme, host: u.host, dc, prefix: normalizedPrefix };
   } catch {
@@ -323,7 +329,7 @@ function updateSavedAvailability() {
     }
     COLLECTIONS.getAll((collections) => {
       // If we have a host, prioritize that? Or just show all?
-      // User said "Load Saved should be cliackable on any tab"
+      // User said "Load Saved should be clickable on any tab"
       // So logic: always check if ANY collection exists.
       loadSavedBtn.disabled = !collections || collections.length === 0;
     });
@@ -345,14 +351,14 @@ function updateSavedAvailability() {
 /* collections moved to collections.js */
 
 function loadSecretsForContext(ctx, tabId, attempt = 0) {
-  setStatus("Fetching keys...");
+  setStatus("Santa is fetching your keys…");
   chrome.runtime.sendMessage(
     { type: CONSTANTS.MESSAGE_TYPES.FETCH_PAGE_VALUES, scheme: ctx.scheme, host: ctx.host, dc: ctx.dc, prefix: ctx.prefix },
     (response) => {
       showLoader(false);
       if (chrome.runtime.lastError || !response) {
-        const err = chrome.runtime.lastError?.message || "Internal communication failed.";
-        setStatus(`Santa says please refresh and come back. (${err})`);
+        const err = chrome.runtime.lastError?.message || "internal error";
+        setStatus(`Santa hit a snag (${err}). Please close and reopen the extension.`);
         return;
       }
       if (response.error) {
@@ -360,7 +366,7 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
         const lower = message.toLowerCase();
         let friendly = "Santa is unable to get keys. Please interact with the Consul UI (logged in) and try again.";
         if (lower.includes("grab your consul session")) {
-          friendly = "Santa couldn't grab your Consul session. Please interact with the Consul UI while logged in and try again!";
+          friendly = "Santa couldn't grab your Consul session. Please open the Consul UI, log in, and browse to a KV path — then click Load again.";
         } else if (lower.includes("not found")) {
           // If the background already provided a friendly message for not found, use it.
           // Otherwise, provide a default friendly one.
@@ -368,7 +374,7 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
         } else if (lower.includes("santa noticed your consul session expired")) {
           friendly = "Santa noticed your Consul session expired. Please interact with the Consul UI (logged in) and try again!";
         } else if (lower.includes("permission denied") || lower.includes("acl not found") || lower.includes("access")) {
-          friendly = "Your Consul session might have expired. Please interact with the Consul UI (logged in) and try again!";
+          friendly = "Santa noticed your Consul session may have expired. Please interact with the Consul UI (logged in) and try again.";
         } else if (lower.includes("santa says") || lower.includes("santa couldn't") || lower.includes("santa can't")) {
           friendly = message;
         }
@@ -382,7 +388,7 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
             lower.includes("access"));
         if (shouldRetry) {
           showLoader(true);
-          setStatus("Refreshing Consul session…");
+          setStatus("Trying to capture Consul session — please interact with the Consul UI if this takes a moment…");
           TOKEN.ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix).then(() => {
             loadSecretsForContext(ctx, tabId, attempt + 1);
           });
@@ -418,7 +424,7 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
 
       const failed = Number(response?.failed || 0);
       const skipped = Number(response?.skipped || 0);
-      const parts = [`Loaded ${Object.keys(currentSecrets).length} keys`];
+      const parts = [`Santa loaded ${Object.keys(currentSecrets).length} keys`];
       if (skipped) parts.push(`${skipped} folders skipped`);
       if (failed) parts.push(`${failed} values failed`);
       setStatus(parts.join(" · "));
@@ -433,7 +439,7 @@ loadBtn.addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
     showLoader(false);
-    setStatus("Unable to read current tab.");
+    setStatus("Santa couldn't read the current tab. Please try again.");
     return;
   }
 
@@ -464,7 +470,10 @@ loadBtn.addEventListener("click", async () => {
   }
 
   hideHostPermissionPrompt();
-  await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+  const capturedToken = await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+  if (!capturedToken) {
+    setStatus("No Consul session detected — if your Consul requires a token, log in to the Consul UI first, then click Load again.");
+  }
   loadSecretsForContext(ctx, tab.id);
 });
 
@@ -485,11 +494,14 @@ grantPermissionBtn.addEventListener("click", async () => {
   showLoader(true);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id) {
-    await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+    const capturedToken = await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
+    if (!capturedToken) {
+      setStatus("Santa couldn't detect a Consul session — if your Consul requires a token, log in to the Consul UI first, then click Load again.");
+    }
     loadSecretsForContext(ctx, tab.id);
   } else {
     showLoader(false);
-    setStatus("Unable to read current tab.");
+    setStatus("Santa couldn't read the current tab. Please try again.");
   }
 });
 
@@ -502,11 +514,11 @@ UPLOAD.wireOpenButton(uploadKeyValuesBtn, {
 
 saveBtn.addEventListener("click", () => {
   if (!currentSecrets || Object.keys(currentSecrets).length === 0) {
-    setStatus("No keys to save.");
+    setStatus("Santa has no keys to save yet. Load secrets first.");
     return;
   }
   if (!currentPrefix) {
-    setStatus("Load secrets from a Consul page first.");
+    setStatus("Santa needs a prefix — load secrets from a Consul page first.");
     return;
   }
   let host = currentHost || "";
@@ -527,7 +539,7 @@ saveBtn.addEventListener("click", () => {
         .concat([{ ...keep, host, title, updatedAt: now, keys: currentSecrets }]);
     }
     STORAGE.setCollections(next, () => {
-      setStatus("Collection saved.");
+      setStatus("Santa saved your collection.");
       updateSavedAvailability();
     });
   });
@@ -542,7 +554,7 @@ loadSavedBtn.addEventListener("click", () => {
   getCollections((collections) => {
     showLoader(false);
     if (!collections || collections.length === 0) {
-      setStatus("No saved collections found.");
+      setStatus("Santa couldn't find any saved collections.");
       loadSavedBtn.disabled = true;
       return;
     }
@@ -560,7 +572,7 @@ loadSavedBtn.addEventListener("click", () => {
     setPostLoadVisible(false);
     setCompareVisible(true, collections.length >= 2);
     loadSavedBtn.disabled = false;
-    setStatus(`Loaded ${collections.length} collections`);
+    setStatus(`Santa loaded ${collections.length} saved collections.`);
 
     // Copy Jetbrains button visible but disabled on Load Saved page
     if (intellijBtn) {
@@ -572,7 +584,7 @@ loadSavedBtn.addEventListener("click", () => {
 
 downloadBtn.addEventListener("click", () => {
   if (!currentSecrets || Object.keys(currentSecrets).length === 0) {
-    setStatus("No keys to download.");
+    setStatus("Santa has no keys to download. Load secrets first.");
     return;
   }
 
@@ -594,12 +606,12 @@ downloadBtn.addEventListener("click", () => {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-  setStatus("Downloaded .env file.");
+  setStatus("Santa downloaded your .env file.");
 });
 
 intellijBtn.addEventListener("click", () => {
   if (!currentSecrets || Object.keys(currentSecrets).length === 0) {
-    setStatus("No keys to copy.");
+    setStatus("Santa has no keys to copy. Load secrets first.");
     return;
   }
 
@@ -608,7 +620,7 @@ intellijBtn.addEventListener("click", () => {
     .join(";");
   const payload = pairs.length > 0 ? `${pairs};` : "";
   navigator.clipboard.writeText(payload);
-  setStatus("Copied JetBrains format.");
+  setStatus("Santa copied the JetBrains format to your clipboard.");
 });
 
 /* compare wiring delegated to compare.js */

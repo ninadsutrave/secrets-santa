@@ -84,8 +84,7 @@
       candidates.sort((a, b) => b.score - a.score);
       const best = candidates[0]?.value || "";
       if (best) {
-        const suffix = "";
-        fetch(`/v1/acl/token/self${suffix}`, {
+        fetch(`/v1/acl/token/self`, {
           method: "GET",
           credentials: "include",
           headers: { "X-Consul-Token": best }
@@ -130,8 +129,7 @@
       candidates.sort((a, b) => b.score - a.score);
       const best = candidates[0]?.value || "";
       if (best) {
-        const suffix = "";
-        fetch(`/v1/acl/token/self${suffix}`, {
+        fetch(`/v1/acl/token/self`, {
           method: "GET",
           credentials: "include",
           headers: { "X-Consul-Token": best }
@@ -255,7 +253,11 @@
               const dc = String(msg.dc || "");
               const prefix = String(msg.prefix || "");
               const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
-              const kvPath = prefix ? `/v1/kv/${encodeURI(prefix)}` : "/v1/kv/";
+              // Encode each path segment individually so special chars (?, #, &) don't corrupt the URL.
+              const encodedPrefix = prefix
+                ? prefix.split("/").filter(Boolean).map(encodeURIComponent).join("/")
+                : "";
+              const kvPath = encodedPrefix ? `/v1/kv/${encodedPrefix}/` : "/v1/kv/";
               const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
               fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => { });
               fetch(kvUrl, { credentials: "include" }).catch(() => { });

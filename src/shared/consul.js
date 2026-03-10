@@ -12,26 +12,41 @@ function decodeBase64Utf8(b64) {
   return new TextDecoder().decode(bytes);
 }
 
+/* Encodes each path segment with encodeURIComponent while preserving slash separators.
+   This correctly handles segments containing ?, #, &, = and other special characters
+   that encodeURI would leave unencoded, breaking the query string. */
+function encodePathSegments(path) {
+  return String(path || "").split("/").map((s) => (s ? encodeURIComponent(s) : "")).join("/");
+}
+
 function buildKvValueUrl({ scheme = "https", host, dc, fullKey }) {
   const s = String(scheme || "https").replace(":", "");
-  return `${s}://${host}/v1/kv/${encodeURI(fullKey)}?dc=${encodeURIComponent(dc)}`;
+  const encodedKey = encodePathSegments(fullKey);
+  // Only append ?dc= when a datacenter is specified; empty dc= is invalid and confuses some Consul versions.
+  const dcParam = dc ? `?dc=${encodeURIComponent(dc)}` : "";
+  return `${s}://${host}/v1/kv/${encodedKey}${dcParam}`;
 }
 
 function buildKvListKeysUrl({ scheme = "https", host, dc, prefix }) {
   const p = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
   const s = String(scheme || "https").replace(":", "");
-  const base = p ? `/v1/kv/${encodeURI(p)}` : "/v1/kv/";
+  const encodedP = p ? encodePathSegments(p) : "";
+  const base = encodedP ? `/v1/kv/${encodedP}` : "/v1/kv/";
   const sep = encodeURIComponent("/");
-  return `${s}://${host}${base}?keys&dc=${encodeURIComponent(dc)}&separator=${sep}`;
+  const dcParam = dc ? `&dc=${encodeURIComponent(dc)}` : "";
+  return `${s}://${host}${base}?keys${dcParam}&separator=${sep}`;
 }
 
 function buildKvPutUrl({ scheme = "https", host, dc, fullKey }) {
   const s = String(scheme || "https").replace(":", "");
-  return `${s}://${host}/v1/kv/${encodeURI(fullKey)}?dc=${encodeURIComponent(dc)}`;
+  const encodedKey = encodePathSegments(fullKey);
+  const dcParam = dc ? `?dc=${encodeURIComponent(dc)}` : "";
+  return `${s}://${host}/v1/kv/${encodedKey}${dcParam}`;
 }
 
 globalThis.SECRETS_SANTA.CONSUL = {
   decodeBase64Utf8,
+  encodePathSegments,
   buildKvValueUrl,
   buildKvListKeysUrl,
   buildKvPutUrl

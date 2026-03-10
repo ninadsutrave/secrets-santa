@@ -8,16 +8,16 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
   let currentIsDiff = false;
 
   function ensureConfig() {
-    if (!cfg) throw new Error("TABLE not initialized");
+    return Boolean(cfg);
   }
 
   function isSensitiveKey(key) {
-    ensureConfig();
+    if (!ensureConfig()) return false;
     return cfg.sensitiveRegex.test(key);
   }
 
   function buildValueActions(key, value, valueContainer, actionsContainer) {
-    ensureConfig();
+    if (!ensureConfig()) return;
     const { ENV, MODALS, TOKEN } = globalThis.SECRETS_SANTA;
     const textSpan = document.createElement("span");
     textSpan.className = "value-text";
@@ -50,7 +50,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     copy.addEventListener("click", (event) => {
       event.stopPropagation();
       navigator.clipboard.writeText(String(value));
-      cfg.setStatus(`Copied ${key}`);
+      cfg.setStatus(`Santa copied "${key}" to your clipboard.`);
     });
     actionsContainer.appendChild(copy);
 
@@ -145,7 +145,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
                   (res) => {
                     cfg.showLoader(false);
                     if (chrome.runtime.lastError || !res || !res.ok) {
-                      const msg = String(res?.error || "Failed to update key.");
+                      const msg = String(res?.error || "Santa couldn't update that key. Please try again.");
                       cfg.setStatus(msg);
                       resolve();
                       return;
@@ -187,18 +187,18 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
                     } else if (existingJsonBtn) {
                       existingJsonBtn.remove();
                     }
-                    cfg.setStatus(`Updated ${key}`);
+                    cfg.setStatus(`Santa saved "${key}".`);
                     resolve();
                   }
                 )
               );
             } else {
               cfg.showLoader(false);
-              cfg.setStatus("Unable to update key: no active tab.");
+              cfg.setStatus("Santa couldn't update — no active tab found. Please try again.");
             }
           } catch {
             cfg.showLoader(false);
-            cfg.setStatus("Failed to update key.");
+            cfg.setStatus("Santa couldn't update that key. Please try again.");
           } finally {
             closeEditor();
           }
@@ -269,7 +269,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
   }
 
   function renderTable(data, isDiff = false) {
-    ensureConfig();
+    if (!ensureConfig()) return;
     const { table, tbody, savedList, intellijBtn } = cfg;
     currentIsDiff = Boolean(isDiff);
     tbody.innerHTML = "";

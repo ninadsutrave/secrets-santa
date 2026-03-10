@@ -138,13 +138,16 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       if (!token) return "";
       const validOnTab = await validateTokenOnTab(tabId, dc, token);
       if (validOnTab) {
-        globalThis.SECRETS_SANTA.STORAGE.setTokenForHost(host, token);
-        await new Promise((resolve) =>
-          chrome.runtime.sendMessage({ type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host }, () =>
-            resolve()
+        // Let the background be the single source of truth — it validates and stores atomically.
+        // Storing directly from the popup AND via SET_TOKEN creates a race where background
+        // validation might clear a token the popup just wrote, causing inconsistent state.
+        const stored = await new Promise((resolve) =>
+          chrome.runtime.sendMessage(
+            { type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host },
+            (res) => resolve(res?.ok === true)
           )
         );
-        return token;
+        return stored ? token : "";
       }
       return "";
     } catch {
@@ -277,7 +280,11 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             const dc = String(dcArg || "");
             const prefix = String(prefixArg || "");
             const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
-            const kvPath = prefix ? `/v1/kv/${encodeURI(prefix)}` : "/v1/kv/";
+            // Encode each path segment individually so special chars don't corrupt the query string.
+            const encodedPrefix = prefix
+              ? prefix.split("/").filter(Boolean).map(encodeURIComponent).join("/")
+              : "";
+            const kvPath = encodedPrefix ? `/v1/kv/${encodedPrefix}/` : "/v1/kv/";
             const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
             fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => { });
             fetch(kvUrl, { credentials: "include" }).catch(() => { });
