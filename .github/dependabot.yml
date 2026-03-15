@@ -1,0 +1,54 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Dependabot
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Automatically opens PRs to keep dependencies up to date.
+#
+# Why this matters:
+#   • GitHub Actions use mutable tags (e.g. actions/checkout@v4 can silently
+#     change its content over time). Dependabot keeps action versions pinned
+#     and current, reducing supply-chain risk.
+#   • npm devDependencies (eslint, esbuild) drift over time — Dependabot
+#     surfaces new versions as small, reviewable PRs rather than big-bang
+#     manual updates.
+#
+# PRs are raised weekly on Mondays to minimise notification noise.
+# All PRs get the "dependencies" label for easy triage/filtering.
+# ══════════════════════════════════════════════════════════════════════════════
+
+version: 2
+
+updates:
+
+  # ── GitHub Actions ──────────────────────────────────────────────────────────
+  # Watches all `uses:` references in .github/workflows/*.yml and opens PRs
+  # when newer versions of those actions are published.
+  # ────────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"          # Scans .github/workflows/ relative to the repo root
+    schedule:
+      interval: "weekly"
+      day: "monday"         # One PR batch per week — low noise
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(deps)"  # e.g. "chore(deps): bump actions/checkout from 4.1.0 to 4.2.0"
+
+  # ── npm (devDependencies only) ───────────────────────────────────────────────
+  # Watches package.json devDependencies (eslint, esbuild) and opens PRs when
+  # new versions are available. There are no runtime dependencies to watch.
+  # ────────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps)"  # e.g. "chore(deps): bump eslint from 9.39.3 to 9.40.0"
+    # This project has no production dependencies — only watch devDependencies.
+    allow:
+      - dependency-type: "development"

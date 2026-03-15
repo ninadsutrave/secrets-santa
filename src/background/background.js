@@ -1,8 +1,47 @@
-/* Background service worker:
-   - Captures X-Consul-Token from Consul UI requests
-   - Lists direct keys via /v1/kv/<prefix>?keys&separator=/
-   - Fetches key values via /v1/kv/<fullKey>
-   - Handles commands (keyboard shortcut) */
+/* Background service worker — the single authoritative module for token management and KV API calls.
+ *
+ * ── Responsibilities ─────────────────────────────────────────────────────────────────────────
+ *
+ *  Token capture (passive)
+ *    webRequest.onBeforeSendHeaders intercepts every outgoing request that carries
+ *    X-Consul-Token. Each candidate is validated and stored only if confirmed valid.
+ *
+ *  Token storage (single write path)
+ *    The background is the ONLY writer of tokens to chrome.storage.
+ *    The popup never writes directly — it sends SET_TOKEN and the background validates
+ *    + stores atomically. This prevents races between concurrent writers.
+ *
+ *  Token validation (tri-state — see validateToken below)
+ *    Returns "valid" | "invalid" | "unreachable".
+ *    Callers MUST handle all three; "unreachable" must never clear a stored token.
+ *
+ *  KV API
+ *    listDirectKeys, fetchKeyValue, putKeyValue each use a triple-retry pattern:
+ *      1. Try with the cached token
+ *      2. On 401/403: re-read the latest stored token and retry (handles token races)
+ *      3. On 401/403 + x-consul-default-acl-policy: allow → retry without any token
+ *         (handles anonymous-access Consul where a stale token produces a 403)
+ *
+ *  Message routing
+ *    chrome.runtime.onMessage dispatches on message.type:
+ *      FETCH_KEYS            → validate + return current token for a host
+ *      FETCH_VISIBLE_VALUES  → batch-fetch values for a caller-supplied list of keys
+ *      FETCH_PAGE_VALUES     → list direct keys under a prefix, then fetch all values
+ *      SET_TOKEN             → accept a token sourced by the content script or popup
+ *      APPLY_ENV             → bulk PUT key/value pairs from a parsed .env file
+ *
+ * ── In-memory caches (reset on each service worker restart) ──────────────────────────────────
+ *
+ *  cachedTokens          { host → token }                   Fast path before storage lookup
+ *  rejectedTokensByHost  { host → Map<token, expiresAt> }   TTL-based rejection (5 min)
+ *  validationCache       { host → { token, expires } }      Avoids repeat token/self calls
+ *  validationInFlight    { host → { token, promise } }      Coalesces concurrent validations
+ *
+ * ── Dependencies ─────────────────────────────────────────────────────────────────────────────
+ *
+ *  ../shared/constants.js  → CONSTANTS  (headers, message types, URL patterns)
+ *  ../shared/storage.js    → STORAGE    (chrome.storage.session/local wrappers)
+ *  ../shared/consul.js     → CONSUL     (URL builders, base64 decoder) */
 
 importScripts(
   "../shared/constants.js",
@@ -68,6 +107,52 @@ function isAclNotFound(errorText) {
 
 function isPermissionDenied(errorText) {
   return String(errorText || "").toLowerCase().includes("permission denied");
+}
+
+/* Checks whether a value looks like a plausible Consul token (UUID, JWT, or generic opaque).
+   Used when scanning cookies so we don't store obviously garbage values. */
+function plausibleToken(value) {
+  const v = String(value || "").trim();
+  if (!v) return "";
+  const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidLike.test(v)) return v;
+  // JWT format: three base64url segments (Consul Enterprise / HCP)
+  if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v) && v.length >= 20) return v;
+  // Generic opaque token — cap raised to 2048 for enterprise tokens
+  if (v.length < 20 || v.length > 2048 || /\s/.test(v)) return "";
+  return v;
+}
+
+/* Reads Consul-domain cookies directly from the background service worker via chrome.cookies.
+   More reliable than document.cookie via executeScript — works even when the tab is inactive
+   or the content script failed to inject. Catches cookie-based auth patterns on any tab load. */
+async function getTokenFromCookies(host) {
+  try {
+    if (typeof chrome.cookies === "undefined" || !chrome.cookies.getAll) return "";
+    const h = String(host || "").toLowerCase();
+    if (!h) return "";
+    // Try HTTPS first, then HTTP — same scheme priority as validateToken
+    const urls = [`https://${h}/`, `http://${h}/`];
+    for (const url of urls) {
+      try {
+        const cookies = await chrome.cookies.getAll({ url });
+        const candidates = [];
+        for (const c of cookies) {
+          const key = String(c.name || "").toLowerCase();
+          if (!(key.includes("consul") || key.includes("token") || key.includes("acl"))) continue;
+          const t = plausibleToken(c.value || "");
+          if (!t) continue;
+          let score = 0;
+          if (key.includes("token")) score += 6;
+          if (key.includes("acl")) score += 3;
+          candidates.push({ value: t, score });
+        }
+        candidates.sort((a, b) => b.score - a.score);
+        if (candidates[0]?.value) return candidates[0].value;
+      } catch { }
+    }
+  } catch { }
+  return "";
 }
 
 // Validates a Consul token against the /v1/acl/token/self endpoint.
@@ -187,8 +272,15 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 );
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command === CONSTANTS.COMMANDS.OPEN_UI) {
+  if (command !== CONSTANTS.COMMANDS.OPEN_UI) return;
+  try {
     chrome.action.openPopup();
+  } catch {
+    // Firefox MV3 fallback: chrome.action.openPopup() requires a polyfill on Firefox.
+    // Toolbar icon click always works regardless; this only affects the keyboard shortcut.
+    if (typeof browser !== "undefined" && browser.browserAction?.openPopup) {
+      browser.browserAction.openPopup();
+    }
   }
 });
 
@@ -202,7 +294,14 @@ async function getActiveToken(host) {
   }
 
   if (cachedTokens[h]) return cachedTokens[h];
-  return new Promise((resolve) => STORAGE.getTokenForHost(h, (t) => resolve(t || "")));
+
+  const stored = await new Promise((resolve) => STORAGE.getTokenForHost(h, (t) => resolve(t || "")));
+  if (stored) return stored;
+
+  // Cookie fallback: read Consul-domain cookies via chrome.cookies API.
+  // More reliable than document.cookie via executeScript — works even when the tab is inactive.
+  const fromCookies = await getTokenFromCookies(h);
+  return fromCookies;
 }
 
 /* Fetches a single KV value and decodes base64 payload returned by Consul. */
@@ -311,15 +410,17 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
     }
 
     if (!res.ok) {
-      const defaultAclPolicyFinal = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+      // defaultAclPolicy was read from the original failed response on line 387.
+      // res is never changed by a failed retry — successful retries would have set res.ok=true
+      // and skipped this block entirely — so defaultAclPolicy is always current here.
       if (res.status === 404) {
         const notFoundMsg =
-          defaultAclPolicyFinal === "deny"
+          defaultAclPolicy === "deny"
             ? (token ? "Santa can't find these secrets. Check the folder path or datacenter, or interact with the Consul UI to refresh your session." : "Santa couldn't grab your Consul session. Please interact with the Consul UI while logged in and try again.")
             : "Santa can't find these secrets. Check the folder path or datacenter, or interact with the Consul UI and try again.";
         return { ok: false, status: 404, errorText: notFoundMsg };
       }
-      if (!token && defaultAclPolicyFinal === "deny" && !errorText) {
+      if (!token && defaultAclPolicy === "deny" && !errorText) {
         errorText =
           "Santa couldn't grab your Consul session. Please open the Consul UI, make sure you're logged in, then try again.";
       }

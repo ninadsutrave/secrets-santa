@@ -373,19 +373,24 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
           friendly = lower.includes("santa can't find") ? message : "Santa can't find these secrets. Check the folder path or datacenter, or interact with the Consul UI to refresh your session.";
         } else if (lower.includes("santa noticed your consul session expired")) {
           friendly = "Santa noticed your Consul session expired. Please interact with the Consul UI (logged in) and try again!";
-        } else if (lower.includes("permission denied") || lower.includes("acl not found") || lower.includes("access")) {
+        } else if (lower.includes("permission denied") || lower.includes("acl not found")) {
+          // Raw Consul ACL error text — treat as session expiry since the token was explicitly rejected.
           friendly = "Santa noticed your Consul session may have expired. Please interact with the Consul UI (logged in) and try again.";
-        } else if (lower.includes("santa says") || lower.includes("santa couldn't") || lower.includes("santa can't")) {
+        } else if (lower.startsWith("santa ")) {
+          // Any other "Santa …" message from the background already contains user-friendly text — pass it through.
           friendly = message;
         }
 
+        // Only retry on token-related failures — "permission denied" and "acl not found" suggest
+        // the token may have just expired and a fresh capture could succeed. Do NOT retry on
+        // generic "access" strings since those could be genuine permission denials, not session
+        // expiry, and retrying would just waste a round trip.
         const shouldRetry =
           attempt === 0 &&
           tabId &&
           (lower.includes("acl not found") ||
             lower.includes("santa couldn't capture") ||
-            lower.includes("permission denied") ||
-            lower.includes("access"));
+            lower.includes("permission denied"));
         if (shouldRetry) {
           showLoader(true);
           setStatus("Trying to capture Consul session — please interact with the Consul UI if this takes a moment…");
@@ -529,7 +534,9 @@ saveBtn.addEventListener("click", () => {
     const now = Date.now();
     let next = [];
     if (matches.length === 0) {
-      const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(now);
+      const id = typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : String(now) + "-" + Math.random().toString(36).slice(2, 11);
       const collection = { id, host, title, createdAt: now, updatedAt: now, keys: currentSecrets };
       next = [...collections, collection];
     } else {

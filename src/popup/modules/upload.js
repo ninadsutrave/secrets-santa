@@ -81,6 +81,12 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     const file = el.envFileInput?.files?.[0];
     if (!file) return;
     if (!pending?.ctx || !pending?.tabId) return;
+    if (file.size > 10 * 1024 * 1024) {
+      cfg.setStatus("That file is too large. Santa expects .env files under 10 MB.");
+      if (el.envFileLabel) el.envFileLabel.textContent = "No file chosen";
+      if (el.envFileInput) el.envFileInput.value = "";
+      return;
+    }
     file.text().then((text) => {
       const parsed = cfg.ENV.parseDotEnv(text);
       pending.entries = parsed.entries;
