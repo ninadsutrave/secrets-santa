@@ -1,4 +1,46 @@
+/* Consul token bridge — injected into the MAIN world of the Consul UI tab.
+ *
+ * ── Why MAIN world, not the default ISOLATED content script world? ────────────────────────────
+ *
+ *  Chrome extensions run content scripts in an ISOLATED world — a sandboxed JS environment
+ *  that shares the DOM with the page but has its own separate window, fetch, and prototype
+ *  chain. Wrapping window.fetch or XMLHttpRequest.prototype in the ISOLATED world has NO
+ *  effect on the page's own fetch calls because the page sees a different copy of those objects.
+ *
+ *  To intercept the Consul SPA's network calls we must inject into the MAIN world, where
+ *  window.fetch is the same object the page code uses. chrome.scripting.executeScript with
+ *  world: "MAIN" is the MV3-approved way to do this.
+ *
+ * ── Injection mechanism ───────────────────────────────────────────────────────────────────────
+ *
+ *  This file is NOT listed in manifest.json content_scripts.
+ *  token.js (popup) calls chrome.scripting.executeScript({ world: "MAIN" }) to inject it
+ *  on demand when the popup is opened for a Consul tab.
+ *
+ *  window.__ss_bridge_installed guards against double-injection if the user opens the popup
+ *  multiple times on the same tab without a page reload.
+ *
+ * ── Token emission paths ─────────────────────────────────────────────────────────────────────
+ *
+ *  emitToken() sends the captured token through two channels simultaneously:
+ *    1. CustomEvent "SECRETS_SANTA_TOKEN" on window — picked up by a separate ISOLATED-world
+ *       listener installed by installTokenSniffer() in token.js, which then forwards it to
+ *       the background via chrome.runtime.sendMessage. This path handles the case where the
+ *       bridge is injected without direct chrome.runtime access.
+ *    2. chrome.runtime.sendMessage({ type: "SET_TOKEN" }) — direct path to the background
+ *       service worker; works when the MAIN world has access to the extension runtime.
+ *
+ * ── Message handlers ─────────────────────────────────────────────────────────────────────────
+ *
+ *  SS_PRIME → fires harmless Consul API requests (/v1/agent/self + KV list) so that the
+ *             webRequest listener and fetch/XHR hooks in this file have traffic to intercept
+ *             immediately after the popup opens.
+ *  SS_SCAN  → re-runs the localStorage, sessionStorage, IndexedDB, and cookie scans.
+ *             Called by the popup after the 2-second polling window expires without a token. */
+
 (() => {
+  /* Emits a captured token to the background service worker.
+   * Two paths are used simultaneously for reliability — see file header above. */
   function emitToken(t) {
     try {
       window.dispatchEvent(new CustomEvent("SECRETS_SANTA_TOKEN", { detail: String(t || "") }));
@@ -21,7 +63,10 @@
     if (uuidLike.test(v)) return v;
     const match = v.match(uuidInText);
     if (match?.[0] && uuidLike.test(match[0])) return match[0];
-    if (v.length < 20 || v.length > 256) return "";
+    // JWT format: three base64url segments (Consul Enterprise / HCP — typically 400–1500 chars)
+    if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v) && v.length >= 20) return v;
+    // Generic opaque token — cap raised from 256 to 2048 for enterprise tokens
+    if (v.length < 20 || v.length > 2048) return "";
     if (/\s/.test(v)) return "";
     return v;
   }
@@ -84,8 +129,7 @@
       candidates.sort((a, b) => b.score - a.score);
       const best = candidates[0]?.value || "";
       if (best) {
-        const suffix = "";
-        fetch(`/v1/acl/token/self${suffix}`, {
+        fetch("/v1/acl/token/self", {
           method: "GET",
           credentials: "include",
           headers: { "X-Consul-Token": best }
@@ -116,7 +160,10 @@
       const parts = raw.split(";").map((p) => p.trim());
       const candidates = [];
       for (const p of parts) {
-        const [k, v] = p.split("=");
+        const eqIdx = p.indexOf("=");
+        if (eqIdx === -1) continue;
+        const k = p.slice(0, eqIdx);
+        const v = p.slice(eqIdx + 1); // preserves all characters after the first = (handles base64 padding)
         if (!k || !v) continue;
         const key = String(k).toLowerCase();
         if (!(key.includes("consul") || key.includes("token") || key.includes("acl"))) continue;
@@ -130,8 +177,7 @@
       candidates.sort((a, b) => b.score - a.score);
       const best = candidates[0]?.value || "";
       if (best) {
-        const suffix = "";
-        fetch(`/v1/acl/token/self${suffix}`, {
+        fetch("/v1/acl/token/self", {
           method: "GET",
           credentials: "include",
           headers: { "X-Consul-Token": best }
@@ -152,6 +198,48 @@
             } catch { }
           })
           .catch(() => { });
+      }
+    } catch { }
+  }
+  /* Scans IndexedDB databases at the current origin for Consul session/auth data.
+     Consul UI 1.16+ stores the ACL token in IndexedDB rather than localStorage/sessionStorage.
+     Guarded with indexedDB.databases() availability check (Chrome 72+, Firefox 126+). */
+  async function scanIndexedDB() {
+    try {
+      if (typeof indexedDB === "undefined" || !indexedDB.databases) return;
+      const dbs = await indexedDB.databases();
+      for (const { name } of dbs) {
+        if (!name) continue;
+        try {
+          const token = await new Promise((resolve) => {
+            const req = indexedDB.open(name);
+            req.onerror = () => resolve("");
+            req.onsuccess = () => {
+              const db = req.result;
+              const relevant = Array.from(db.objectStoreNames).filter((s) => {
+                const l = s.toLowerCase();
+                return l.includes("token") || l.includes("acl") || l.includes("auth") ||
+                       l.includes("session") || l.includes("consul");
+              });
+              if (!relevant.length) { db.close(); resolve(""); return; }
+              let found = "";
+              let pending = relevant.length;
+              const done = (val) => {
+                if (val && !found) found = val;
+                if (--pending === 0) { db.close(); resolve(found); }
+              };
+              for (const storeName of relevant) {
+                try {
+                  const tx = db.transaction(storeName, "readonly");
+                  const req2 = tx.objectStore(storeName).getAll();
+                  req2.onsuccess = () => done(findUuidDeep(req2.result));
+                  req2.onerror = () => done("");
+                } catch { done(""); }
+              }
+            };
+          });
+          if (token) { emitToken(token); return; }
+        } catch { }
       }
     } catch { }
   }
@@ -246,6 +334,7 @@
     try {
       scanStorages();
       scanCookies();
+      scanIndexedDB(); // async — runs independently, emits token if found
     } catch { }
     try {
       if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
@@ -255,7 +344,11 @@
               const dc = String(msg.dc || "");
               const prefix = String(msg.prefix || "");
               const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
-              const kvPath = prefix ? `/v1/kv/${encodeURI(prefix)}` : "/v1/kv/";
+              // Encode each path segment individually so special chars (?, #, &) don't corrupt the URL.
+              const encodedPrefix = prefix
+                ? prefix.split("/").filter(Boolean).map(encodeURIComponent).join("/")
+                : "";
+              const kvPath = encodedPrefix ? `/v1/kv/${encodedPrefix}/` : "/v1/kv/";
               const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
               fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => { });
               fetch(kvUrl, { credentials: "include" }).catch(() => { });
@@ -265,6 +358,7 @@
             if (msg && msg.type === "SS_SCAN") {
               scanStorages();
               scanCookies();
+              scanIndexedDB(); // async — runs independently, emits token if found
               sendResponse({ ok: true });
               return true;
             }

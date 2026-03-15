@@ -1,15 +1,26 @@
 ---
 name: Feature request
-about: Suggest an idea for this project
+about: Suggest an idea or improvement
 title: "[Feature] "
 labels: enhancement
 assignees: ''
 ---
 
-**Is your feature request related to a problem? Please describe.**
+## Problem this solves
+<!-- What friction or gap does this address? "I'm always frustrated when..." -->
 
-**Describe the solution you'd like**
+## Proposed solution
+<!-- Describe what you'd like to happen. Be as specific as you can — UI flows, API behaviour, etc. -->
 
-**Describe alternatives you've considered**
+## Alternatives considered
+<!-- Have you tried any workarounds? Are there other approaches you thought about? -->
 
-**Additional context**
+## Consul context
+<!--
+Optional — helps assess feasibility:
+  - Which Consul version / type does this apply to? (OSS, Enterprise, HCP)
+  - Is this about a specific ACL configuration or KV layout?
+-->
+
+## Additional context
+<!-- Screenshots, links, or anything else that might be helpful. -->
