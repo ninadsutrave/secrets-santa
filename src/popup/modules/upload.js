@@ -34,6 +34,12 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     const el = cfg.elements;
     el.uploadModalClose?.addEventListener("click", close);
     el.uploadCancelBtn?.addEventListener("click", close);
+    // Click the backdrop (the overlay itself, not the card) to dismiss.
+    el.uploadModal?.addEventListener("click", (e) => { if (e.target === el.uploadModal) close(); });
+    // Escape key dismisses from anywhere.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && el.uploadModal && !el.uploadModal.classList.contains("hidden")) close();
+    });
     el.uploadTabEnv?.addEventListener("click", () => setTab("env"));
     el.uploadTabJetbrains?.addEventListener("click", () => setTab("jetbrains"));
     el.chooseEnvFileBtn?.addEventListener("click", () => {

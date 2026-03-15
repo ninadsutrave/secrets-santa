@@ -51,6 +51,10 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       event.stopPropagation();
       navigator.clipboard.writeText(String(value));
       cfg.setStatus(`Santa copied "${key}" to your clipboard.`);
+      // Brief ✓ flash on the button itself so the user doesn't need to look at the status bar.
+      const prev = copy.textContent;
+      copy.textContent = "✓";
+      setTimeout(() => { copy.textContent = prev; }, 900);
     });
     actionsContainer.appendChild(copy);
 

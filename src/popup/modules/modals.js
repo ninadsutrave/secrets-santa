@@ -27,6 +27,10 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
   jsonModalClose?.addEventListener("click", closeJsonModal);
   jsonModalDone?.addEventListener("click", closeJsonModal);
+  // Click the backdrop (the overlay itself, not the card) to dismiss.
+  jsonModal?.addEventListener("click", (e) => { if (e.target === jsonModal) closeJsonModal(); });
+  // Escape key dismisses from anywhere.
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeJsonModal(); });
   jsonModalCopy?.addEventListener("click", () => {
     if (!jsonModalBody) return;
     navigator.clipboard.writeText(jsonModalBody.textContent || "");
