@@ -62,7 +62,9 @@ temp/
 *.pid.lock
 
 # ----------------------------
-# Chrome extension packaging
+# Extension packaging output
 # ----------------------------
 *.crx
 *.pem
+*.zip
+*.xpi

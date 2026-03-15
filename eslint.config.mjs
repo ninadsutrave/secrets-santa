@@ -40,7 +40,9 @@ export default [
                 TextDecoder: "readonly",
                 atob: "readonly",
                 requestAnimationFrame: "readonly",
-                confirm: "readonly"
+                confirm: "readonly",
+                indexedDB: "readonly",
+                browser: "readonly"
             },
         },
         rules: {

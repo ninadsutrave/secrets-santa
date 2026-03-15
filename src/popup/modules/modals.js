@@ -31,7 +31,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     if (!jsonModalBody) return;
     navigator.clipboard.writeText(jsonModalBody.textContent || "");
     const status = document.getElementById("status");
-    if (status) status.textContent = "Copied JSON";
+    if (status) status.textContent = "Santa copied the JSON to your clipboard.";
   });
 
   globalThis.SECRETS_SANTA.MODALS = { openJsonModal };

@@ -126,7 +126,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             cfg.setDiffTitles(left.title || "A", right.title || "B");
             const diff = buildDiff(left.keys, right.keys);
             if (Object.keys(diff).length === 0) {
-              cfg.setStatus(`No differences found between A (${left.title || "A"}) and B (${right.title || "B"}).`);
+              cfg.setStatus(`Santa found no differences between "${left.title || "A"}" and "${right.title || "B"}".`);
               return;
             }
             cfg.setCompareVisible(true, true);
@@ -143,7 +143,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             );
             return;
           }
-          cfg.setStatus(`Selected ${next.length}/2 collections (A then B)`);
+          cfg.setStatus(`Santa's listening — select ${next.length}/2 collections (A then B).`);
           renderPicker(collections, () => next, setSelectedIds);
         });
 
@@ -177,7 +177,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
         cfg.setPostLoadVisible(true);
         cfg.setCompareVisible(true, true);
         cfg.showSearch();
-        cfg.setStatus("Compare cancelled.");
+        cfg.setStatus("Santa cancelled the comparison.");
         return;
       }
 
@@ -186,14 +186,14 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
         const ctx = tab?.url ? deps.parseConsulContext(tab.url) : null;
         const host = ctx?.host || deps.getCurrentHost() || "";
         if (!host) {
-          cfg.setStatus("Open a Consul KV page to compare host-scoped collections.");
+          cfg.setStatus("Santa needs a Consul KV page open to compare host-scoped collections.");
           cfg.setCompareVisible(true, false);
           return;
         }
         deps.getCollections((collections) => {
           const scoped = (collections || []).filter((c) => (c.host || "") === host);
           if (scoped.length < 2) {
-            cfg.setStatus("Need at least 2 saved collections to compare.");
+            cfg.setStatus("Santa needs at least 2 saved collections to compare. Load and save some first.");
             cfg.setCompareVisible(true, false);
             return;
           }
@@ -211,7 +211,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             }
           );
           cfg.showSearch();
-          cfg.setStatus("Select two collections (A then B) to compare.");
+          cfg.setStatus("Santa's ready — select two collections (A then B) to compare.");
         });
       });
     });

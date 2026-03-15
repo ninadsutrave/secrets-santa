@@ -1,8 +1,47 @@
-/* Background service worker:
-   - Captures X-Consul-Token from Consul UI requests
-   - Lists direct keys via /v1/kv/<prefix>?keys&separator=/
-   - Fetches key values via /v1/kv/<fullKey>
-   - Handles commands (keyboard shortcut) */
+/* Background service worker — the single authoritative module for token management and KV API calls.
+ *
+ * ── Responsibilities ─────────────────────────────────────────────────────────────────────────
+ *
+ *  Token capture (passive)
+ *    webRequest.onBeforeSendHeaders intercepts every outgoing request that carries
+ *    X-Consul-Token. Each candidate is validated and stored only if confirmed valid.
+ *
+ *  Token storage (single write path)
+ *    The background is the ONLY writer of tokens to chrome.storage.
+ *    The popup never writes directly — it sends SET_TOKEN and the background validates
+ *    + stores atomically. This prevents races between concurrent writers.
+ *
+ *  Token validation (tri-state — see validateToken below)
+ *    Returns "valid" | "invalid" | "unreachable".
+ *    Callers MUST handle all three; "unreachable" must never clear a stored token.
+ *
+ *  KV API
+ *    listDirectKeys, fetchKeyValue, putKeyValue each use a triple-retry pattern:
+ *      1. Try with the cached token
+ *      2. On 401/403: re-read the latest stored token and retry (handles token races)
+ *      3. On 401/403 + x-consul-default-acl-policy: allow → retry without any token
+ *         (handles anonymous-access Consul where a stale token produces a 403)
+ *
+ *  Message routing
+ *    chrome.runtime.onMessage dispatches on message.type:
+ *      FETCH_KEYS            → validate + return current token for a host
+ *      FETCH_VISIBLE_VALUES  → batch-fetch values for a caller-supplied list of keys
+ *      FETCH_PAGE_VALUES     → list direct keys under a prefix, then fetch all values
+ *      SET_TOKEN             → accept a token sourced by the content script or popup
+ *      APPLY_ENV             → bulk PUT key/value pairs from a parsed .env file
+ *
+ * ── In-memory caches (reset on each service worker restart) ──────────────────────────────────
+ *
+ *  cachedTokens          { host → token }                   Fast path before storage lookup
+ *  rejectedTokensByHost  { host → Map<token, expiresAt> }   TTL-based rejection (5 min)
+ *  validationCache       { host → { token, expires } }      Avoids repeat token/self calls
+ *  validationInFlight    { host → { token, promise } }      Coalesces concurrent validations
+ *
+ * ── Dependencies ─────────────────────────────────────────────────────────────────────────────
+ *
+ *  ../shared/constants.js  → CONSTANTS  (headers, message types, URL patterns)
+ *  ../shared/storage.js    → STORAGE    (chrome.storage.session/local wrappers)
+ *  ../shared/consul.js     → CONSUL     (URL builders, base64 decoder) */
 
 importScripts(
   "../shared/constants.js",
@@ -13,9 +52,34 @@ importScripts(
 const { CONSTANTS, STORAGE, CONSUL } = globalThis.SECRETS_SANTA;
 
 const cachedTokens = {};
-const rejectedTokensByHost = {};
+const rejectedTokensByHost = {}; // { host: Map<token, expiresAt> }
 const validationCache = {}; // { host: { token: string, expires: number } }
 const validationInFlight = {}; // { host: { token: string, promise: Promise } }
+
+const REJECTION_TTL_MS = 5 * 60 * 1000; // 5 minutes — rejected tokens expire so transient errors don't blacklist permanently
+
+function normalizeHost(host) {
+  return String(host || "").toLowerCase().trim();
+}
+
+/* Returns true only if the token is in the rejection cache AND its TTL has not expired. */
+function isTokenRejected(h, candidate) {
+  const map = rejectedTokensByHost[h];
+  if (!map) return false;
+  const expiresAt = map.get(candidate);
+  if (expiresAt === undefined) return false;
+  if (Date.now() > expiresAt) {
+    map.delete(candidate);
+    return false;
+  }
+  return true;
+}
+
+/* Adds a token to the per-host rejection cache with a TTL. */
+function addTokenRejection(h, candidate) {
+  if (!rejectedTokensByHost[h]) rejectedTokensByHost[h] = new Map();
+  rejectedTokensByHost[h].set(candidate, Date.now() + REJECTION_TTL_MS);
+}
 
 /* Persists the latest X-Consul-Token so popup requests can reuse it. */
 function updateToken(token, host) {
@@ -37,10 +101,6 @@ function clearToken(host) {
   if (validationInFlight[h]) delete validationInFlight[h];
 }
 
-function normalizeHost(host) {
-  return String(host || "").toLowerCase().trim();
-}
-
 function isAclNotFound(errorText) {
   return String(errorText || "").toLowerCase().includes("acl not found");
 }
@@ -49,26 +109,81 @@ function isPermissionDenied(errorText) {
   return String(errorText || "").toLowerCase().includes("permission denied");
 }
 
+/* Checks whether a value looks like a plausible Consul token (UUID, JWT, or generic opaque).
+   Used when scanning cookies so we don't store obviously garbage values. */
+function plausibleToken(value) {
+  const v = String(value || "").trim();
+  if (!v) return "";
+  const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidLike.test(v)) return v;
+  // JWT format: three base64url segments (Consul Enterprise / HCP)
+  if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v) && v.length >= 20) return v;
+  // Generic opaque token — cap raised to 2048 for enterprise tokens
+  if (v.length < 20 || v.length > 2048 || /\s/.test(v)) return "";
+  return v;
+}
+
+/* Reads Consul-domain cookies directly from the background service worker via chrome.cookies.
+   More reliable than document.cookie via executeScript — works even when the tab is inactive
+   or the content script failed to inject. Catches cookie-based auth patterns on any tab load. */
+async function getTokenFromCookies(host) {
+  try {
+    if (typeof chrome.cookies === "undefined" || !chrome.cookies.getAll) return "";
+    const h = String(host || "").toLowerCase();
+    if (!h) return "";
+    // Try HTTPS first, then HTTP — same scheme priority as validateToken
+    const urls = [`https://${h}/`, `http://${h}/`];
+    for (const url of urls) {
+      try {
+        const cookies = await chrome.cookies.getAll({ url });
+        const candidates = [];
+        for (const c of cookies) {
+          const key = String(c.name || "").toLowerCase();
+          if (!(key.includes("consul") || key.includes("token") || key.includes("acl"))) continue;
+          const t = plausibleToken(c.value || "");
+          if (!t) continue;
+          let score = 0;
+          if (key.includes("token")) score += 6;
+          if (key.includes("acl")) score += 3;
+          candidates.push({ value: t, score });
+        }
+        candidates.sort((a, b) => b.score - a.score);
+        if (candidates[0]?.value) return candidates[0].value;
+      } catch { }
+    }
+  } catch { }
+  return "";
+}
+
+// Validates a Consul token against the /v1/acl/token/self endpoint.
+// Returns "valid" | "invalid" | "unreachable".
+// Callers MUST distinguish "unreachable" from "invalid":
+//   - "valid":       token confirmed good — store it.
+//   - "invalid":     server explicitly rejected token — discard it.
+//   - "unreachable": network/CORS error — token state unknown, DO NOT clear it.
 async function validateToken(host, token) {
   try {
     const h = String(host || "").toLowerCase();
     const t = String(token || "");
-    if (!h || !t) return false;
+    if (!h || !t) return "invalid";
 
-    // 1. Check validation cache
+    // 1. Check validation cache (only populated on confirmed "valid" results)
     if (validationCache[h] && validationCache[h].token === t && validationCache[h].expires > Date.now()) {
-      return true;
+      return "valid";
     }
 
-    // 2. Check in-flight validations
+    // 2. Coalesce concurrent validations for the same host+token
     if (validationInFlight[h] && validationInFlight[h].token === t) {
       return validationInFlight[h].promise;
     }
 
     const domainLike = /^[a-z0-9.-]+(:\d+)?$/i;
-    if (!domainLike.test(h)) return false;
+    if (!domainLike.test(h)) return "invalid";
 
     const promise = (async () => {
+      // Returns "valid" | "invalid" | "unreachable".
+      // "unreachable" means a network/CORS error — the token's validity is unknown, try the other scheme.
+      // "invalid" means the server responded and explicitly rejected the token — don't bother retrying.
       const doCheck = async (scheme) => {
         try {
           const url = `${scheme}://${h}/v1/acl/token/self`;
@@ -77,37 +192,40 @@ async function validateToken(host, token) {
             credentials: "include",
             headers: { [CONSTANTS.HEADERS.CONSUL_TOKEN_REQUEST]: t }
           });
-          if (res.ok) return true;
+          if (res.ok) return "valid";
           const policy = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
           if ((res.status === 401 || res.status === 403) && policy === "deny") {
             try {
               const errorText = String(await res.text()).toLowerCase();
               if (errorText.includes("acl not found")) {
-                return false;
+                return "invalid";
               }
             } catch { }
-            return true;
+            // 401/403 with deny policy but not "acl not found" — token exists but has limited permissions.
+            return "valid";
           }
-          return false;
+          return "invalid";
         } catch {
-          return false;
+          // Network error, CORS failure, or server unreachable — don't treat as an explicit rejection.
+          return "unreachable";
         }
       };
 
+      // Only fall back to HTTP when HTTPS is unreachable (network error), not when the token is explicitly rejected.
       let result = await doCheck("https");
-      if (!result) result = await doCheck("http");
+      if (result === "unreachable") result = await doCheck("http");
 
-      if (result) {
+      if (result === "valid") {
         validationCache[h] = { token: t, expires: Date.now() + 300000 }; // Cache for 5 mins
       }
       delete validationInFlight[h];
-      return result;
+      return result; // "valid" | "invalid" | "unreachable"
     })();
 
     validationInFlight[h] = { token: t, promise };
     return promise;
   } catch {
-    return false;
+    return "unreachable"; // Unexpected error — don't treat as an explicit token rejection
   }
 }
 
@@ -126,19 +244,17 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
         const host = new URL(details.url).host;
         const candidate = String(tokenHeader.value || "");
         const h = String(host || "").toLowerCase();
-        const rejected = (rejectedTokensByHost[h] && rejectedTokensByHost[h].has(candidate));
-        if (rejected) return;
+        if (isTokenRejected(h, candidate)) return;
         validateToken(host, candidate)
-          .then((valid) => {
-            if (valid) {
+          .then((status) => {
+            if (status === "valid") {
               updateToken(candidate, host);
-            } else {
-              if (cachedTokens[h] && cachedTokens[h] === candidate) {
-                clearToken(h);
-              }
-              if (!rejectedTokensByHost[h]) rejectedTokensByHost[h] = new Set();
-              rejectedTokensByHost[h].add(candidate);
+            } else if (status === "invalid") {
+              // Server explicitly rejected this token — evict it.
+              if (cachedTokens[h] && cachedTokens[h] === candidate) clearToken(h);
+              addTokenRejection(h, candidate);
             }
+            // "unreachable": server down / network error — don't alter stored state.
           })
           .catch(() => { });
       } catch { }
@@ -156,8 +272,15 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 );
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command === CONSTANTS.COMMANDS.OPEN_UI) {
+  if (command !== CONSTANTS.COMMANDS.OPEN_UI) return;
+  try {
     chrome.action.openPopup();
+  } catch {
+    // Firefox MV3 fallback: chrome.action.openPopup() requires a polyfill on Firefox.
+    // Toolbar icon click always works regardless; this only affects the keyboard shortcut.
+    if (typeof browser !== "undefined" && browser.browserAction?.openPopup) {
+      browser.browserAction.openPopup();
+    }
   }
 });
 
@@ -171,7 +294,14 @@ async function getActiveToken(host) {
   }
 
   if (cachedTokens[h]) return cachedTokens[h];
-  return new Promise((resolve) => STORAGE.getTokenForHost(h, (t) => resolve(t || "")));
+
+  const stored = await new Promise((resolve) => STORAGE.getTokenForHost(h, (t) => resolve(t || "")));
+  if (stored) return stored;
+
+  // Cookie fallback: read Consul-domain cookies via chrome.cookies API.
+  // More reliable than document.cookie via executeScript — works even when the tab is inactive.
+  const fromCookies = await getTokenFromCookies(h);
+  return fromCookies;
 }
 
 /* Fetches a single KV value and decodes base64 payload returned by Consul. */
@@ -188,7 +318,7 @@ async function fetchKeyValue({ scheme, host, dc, fullKey, token }) {
   if (!res.ok) {
     try {
       if (res.status === 403 || res.status === 401) {
-        errorText = String(await res.text()).slice(0, 280);
+        errorText = String(await res.text()).slice(0, 360);
       }
     } catch {
       errorText = "";
@@ -243,16 +373,11 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
 
   let res = await doFetch(token);
   let errorText = "";
-  let firstErrorText = "";
-  try {
-    if (!res.ok) {
-      firstErrorText = String(await res.text()).slice(0, 360);
-    }
-  } catch {
-    firstErrorText = "";
-  }
 
   if (!res.ok) {
+    // Read the body exactly once — a Response body can only be consumed once.
+    // All retry branches below replace `res` with fresh responses, so errorText
+    // from the original failure is preserved until a retry explicitly clears it.
     try {
       errorText = String(await res.text()).slice(0, 360);
     } catch {
@@ -285,20 +410,19 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
     }
 
     if (!res.ok) {
-      const defaultAclPolicyFinal = String(res.headers.get("x-consul-default-acl-policy") || "").toLowerCase();
+      // defaultAclPolicy was read from the original failed response on line 387.
+      // res is never changed by a failed retry — successful retries would have set res.ok=true
+      // and skipped this block entirely — so defaultAclPolicy is always current here.
       if (res.status === 404) {
         const notFoundMsg =
-          defaultAclPolicyFinal === "deny"
+          defaultAclPolicy === "deny"
             ? (token ? "Santa can't find these secrets. Check the folder path or datacenter, or interact with the Consul UI to refresh your session." : "Santa couldn't grab your Consul session. Please interact with the Consul UI while logged in and try again.")
             : "Santa can't find these secrets. Check the folder path or datacenter, or interact with the Consul UI and try again.";
         return { ok: false, status: 404, errorText: notFoundMsg };
       }
-      if (!token && defaultAclPolicyFinal === "deny" && !errorText && !firstErrorText) {
+      if (!token && defaultAclPolicy === "deny" && !errorText) {
         errorText =
-          "Santa couldn't grab your Consul session. Please interact with the Consul UI while logged in, then try again.";
-      }
-      if (!errorText && firstErrorText) {
-        errorText = firstErrorText;
+          "Santa couldn't grab your Consul session. Please open the Consul UI, make sure you're logged in, then try again.";
       }
       if ((res.status === 401 || res.status === 403) && isAclNotFound(errorText)) {
         clearToken(host);
@@ -310,7 +434,7 @@ async function listDirectKeys({ scheme, host, dc, prefix, token }) {
   }
 
   const json = await res.json();
-  if (!Array.isArray(json)) return { ok: false, status: 0, errorText: "Unexpected response." };
+  if (!Array.isArray(json)) return { ok: false, status: 0, errorText: "Santa got an unexpected response from Consul. Please try reloading." };
 
   const p = prefix.endsWith("/") ? prefix : `${prefix}/`;
   const base = p.replace(/^\//, "");
@@ -391,9 +515,10 @@ async function applyEnv({ scheme, host, dc, prefix, entries }) {
   const p = String(prefix || "");
   const token = await getActiveToken(host);
   if (token) {
-    const valid = await validateToken(host, token);
-    if (valid) updateToken(token, host);
-    else clearToken(host);
+    const status = await validateToken(host, token);
+    if (status === "valid") updateToken(token, host);
+    else if (status === "invalid") clearToken(host);
+    // "unreachable": keep the token, the PUT calls will fail with proper errors if server is down
   }
 
   const pairs = Array.isArray(entries) ? entries : [];
@@ -402,7 +527,7 @@ async function applyEnv({ scheme, host, dc, prefix, entries }) {
     .filter((e) => Boolean(e.key));
 
   if (cleaned.length === 0) {
-    return { ok: false, error: "No keys found in .env file." };
+    return { ok: false, error: "Santa couldn't find any keys in the .env file. Please check the file format and try again." };
   }
 
   const concurrency = 6;
@@ -431,7 +556,7 @@ async function applyEnv({ scheme, host, dc, prefix, entries }) {
   }
 
   if (failed > 0) {
-    return { ok: false, applied, failed, error: firstError || "Failed to apply some keys." };
+    return { ok: false, applied, failed, error: firstError || "Santa couldn't apply some keys. Check your Consul permissions and try again." };
   }
 
   return { ok: true, applied, failed: 0 };
@@ -442,9 +567,10 @@ async function fetchVisibleValues({ scheme, host, dc, prefix, keys }) {
   const p = prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
   const token = await getActiveToken(host);
   if (token) {
-    const valid = await validateToken(host, token);
-    if (valid) updateToken(token, host);
-    else clearToken(host);
+    const status = await validateToken(host, token);
+    if (status === "valid") updateToken(token, host);
+    else if (status === "invalid") clearToken(host);
+    // "unreachable": keep the token, individual key fetches will fail with proper errors
   }
 
   if (!Array.isArray(keys) || keys.length === 0) {
@@ -504,11 +630,6 @@ async function fetchPageValues({ scheme, host, dc, prefix }) {
   const listRes = await listDirectKeys({ scheme, host, dc, prefix: p, token });
   if (!listRes.ok) {
     if (listRes.errorText) return { error: listRes.errorText };
-    if (isAclNotFound(listRes.errorText)) {
-      return {
-        error: "Santa noticed your Consul session expired. Please interact with the Consul UI (logged in) and try again."
-      };
-    }
     if (listRes.status === 403) {
       return { error: listRes.errorText || "Santa doesn't have permission to list these keys. Ensure you have key:read access." };
     }
@@ -531,23 +652,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const host = String(message?.host || "");
     if (token && host) {
       const h = String(host || "").toLowerCase();
-      const rejected = (rejectedTokensByHost[h] && rejectedTokensByHost[h].has(token));
-      if (rejected) {
-        sendResponse({ ok: false, error: "Rejected invalid Consul token." });
+      if (isTokenRejected(h, token)) {
+        sendResponse({ ok: false, error: "Santa couldn't accept that token — the Consul server says it's invalid. Please log in again." });
         return;
       }
       validateToken(host, token)
-        .then((valid) => {
-          if (valid) {
+        .then((status) => {
+          if (status === "valid" || status === "unreachable") {
+            // "unreachable": background can't reach the server right now, but this token was
+            // sourced from the page (which could reach it), so accept it optimistically.
             updateToken(token, host);
             sendResponse({ ok: true });
           } else {
-            sendResponse({ ok: false, error: "Rejected invalid Consul token." });
-            if (!rejectedTokensByHost[h]) rejectedTokensByHost[h] = new Set();
-            rejectedTokensByHost[h].add(token);
+            // "invalid": server explicitly rejected this token.
+            sendResponse({ ok: false, error: "Santa couldn't accept that token — the Consul server says it's invalid. Please log in again." });
+            addTokenRejection(h, token);
           }
         })
-        .catch(() => sendResponse({ ok: false, error: "Failed to validate token." }));
+        .catch(() => sendResponse({ ok: false, error: "Santa couldn't validate your Consul token. Please check your connection and try again." }));
       return true;
     }
     sendResponse({ ok: false });
@@ -557,7 +679,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === CONSTANTS.MESSAGE_TYPES.APPLY_ENV) {
     applyEnv(message)
       .then(sendResponse)
-      .catch(() => sendResponse({ ok: false, error: "Failed to apply .env file." }));
+      .catch(() => sendResponse({ ok: false, error: "Santa couldn't apply the .env file. Please check your connection and try again." }));
     return true;
   }
 
@@ -571,31 +693,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
         const h = String(host || "").toLowerCase();
-        const rejected = (rejectedTokensByHost[h] && rejectedTokensByHost[h].has(t));
-        const valid = rejected ? false : await validateToken(host, t);
-        if (valid) {
+        const status = isTokenRejected(h, t) ? "invalid" : await validateToken(host, t);
+        if (status === "valid") {
           updateToken(t, host);
           sendResponse({ token: t });
+        } else if (status === "unreachable") {
+          // Server is temporarily unreachable — return the token as-is so the popup can
+          // proceed and receive a meaningful "can't connect" error rather than "no session".
+          sendResponse({ token: t });
         } else {
+          // "invalid": explicitly rejected by the server.
           clearToken(host);
-          if (t) {
-            if (!rejectedTokensByHost[h]) rejectedTokensByHost[h] = new Set();
-            rejectedTokensByHost[h].add(t);
-          }
+          addTokenRejection(h, t);
           sendResponse({ token: "" });
         }
       })
-      .catch(() => sendResponse({ error: "Failed to fetch keys." }));
+      .catch(() => sendResponse({ error: "Santa couldn't fetch keys. Please check your connection and try again." }));
     return true;
   }
 
   if (message?.type === CONSTANTS.MESSAGE_TYPES.FETCH_VISIBLE_VALUES) {
-    fetchVisibleValues(message).then(sendResponse).catch(() => sendResponse({ error: "Failed to fetch keys." }));
+    fetchVisibleValues(message)
+      .then(sendResponse)
+      .catch(() => sendResponse({ error: "Santa couldn't fetch keys. Please check your connection and try again." }));
     return true;
   }
 
   if (message?.type === CONSTANTS.MESSAGE_TYPES.FETCH_PAGE_VALUES) {
-    fetchPageValues(message).then(sendResponse).catch(() => sendResponse({ error: "Failed to fetch keys." }));
+    fetchPageValues(message)
+      .then(sendResponse)
+      .catch(() => sendResponse({ error: "Santa couldn't fetch keys. Please check your connection and try again." }));
     return true;
   }
 });

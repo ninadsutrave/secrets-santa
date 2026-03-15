@@ -1,27 +1,45 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Something isn't working as expected
 title: "[Bug] "
 labels: bug
 assignees: ''
 ---
 
-**Describe the bug**
+## Describe the bug
+<!-- A clear description of what went wrong. -->
 
-**To Reproduce**
-Steps:
-1. Go to ...
-2. Click ...
-3. See error ...
+## Steps to reproduce
+<!-- Be as specific as possible — the easier this is to reproduce, the faster it gets fixed. -->
+1.
+2.
+3.
 
-**Expected behavior**
+## Expected behaviour
+<!-- What should have happened? -->
 
-**Screenshots**
+## Actual behaviour
+<!-- What happened instead? Include any error messages you saw. -->
 
-**Environment**
-- Browser:
-- Version:
-- OS:
-- Consul host/DC:
+## Token capture context
+<!--
+If this is a token-related issue, it helps to know:
+  - Did the token ever appear in the popup? (Yes / No / Sometimes)
+  - Does your Consul instance use ACL tokens? (UUID, JWT, or no auth)
+  - Did you see a "Santa couldn't grab your Consul session" message?
+-->
 
-**Additional context**
+## Environment
+| Field | Value |
+|---|---|
+| Browser + version | |
+| Extension version | <!-- shown in chrome://extensions or about:addons --> |
+| OS | |
+| Consul version / type | <!-- e.g. OSS 1.17, Enterprise, HCP --> |
+| Consul ACL mode | <!-- allow / deny / N/A --> |
+
+## Screenshots or recordings
+<!-- Optional but very helpful for UI bugs. -->
+
+## Additional context
+<!-- Anything else that might be relevant. -->

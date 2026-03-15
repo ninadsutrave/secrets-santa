@@ -1,54 +1,384 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# SecretsSanta — CI Pipeline
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Pipeline overview (jobs run left-to-right; build is blocked until lint passes):
+#
+#   lint ──► build ──► release  (tag pushes only)
+#
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │  HOW TO BLOCK MASTER MERGES ON LINT FAILURE  (one-time repo setup)      │
+# │                                                                          │
+# │  GitHub → Settings → Branches → Add branch protection rule              │
+# │    Branch name pattern : master                                          │
+# │    ✅ Require status checks to pass before merging                       │
+# │    → Search for and add the "Lint" job as a required check               │
+# │    ✅ Require branches to be up to date before merging  (recommended)    │
+# │                                                                          │
+# │  After this, any PR with ESLint errors cannot be merged to master.       │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# WHAT EACH RUN PRODUCES
+# ──────────────────────
+#   PR / master push
+#     • Three downloadable artifacts on the Actions run page:
+#         extension-chrome   →  SecretsSanta-chromium.zip + dist/chromium/
+#         extension-edge     →  SecretsSanta-edge.zip     (same build, Edge label)
+#         extension-firefox  →  SecretsSanta-firefox.zip + SecretsSanta-firefox.xpi + dist/firefox/
+#     • A 🎁 comment posted (and updated on re-runs) on the PR with direct links
+#       to each artifact and per-browser sideload instructions.
+#     • A build summary visible on the Actions run → Summary tab.
+#
+#   Tag push (v*)
+#     • GitHub Release created automatically with all four packages attached:
+#         SecretsSanta-chromium.zip
+#         SecretsSanta-edge.zip
+#         SecretsSanta-firefox.zip
+#         SecretsSanta-firefox.xpi
+#
+# CONTRIBUTOR QUICK REFERENCE
+# ────────────────────────────
+#   npm ci                →  install exact deps from package-lock.json
+#   npm run lint          →  check ESLint (same command as CI)
+#   npm run lint:fix      →  auto-fix safe lint errors before pushing
+#   npm run build:all     →  build both targets → dist/chromium + dist/firefox
+#   npm run zip           →  SecretsSanta-{chromium,firefox}.zip
+#   npm run xpi:firefox   →  SecretsSanta-firefox.xpi  (Firefox Dev/Nightly)
+#
+# To load a local build:
+#   Chrome / Brave  →  chrome://extensions  → Developer mode → Load unpacked → dist/chromium
+#   Edge            →  edge://extensions    → Developer mode → Load unpacked → dist/chromium
+#   Firefox         →  about:debugging      → This Firefox   → Load Temporary Add-on
+#                                                               → select dist/firefox/manifest.json
+# ══════════════════════════════════════════════════════════════════════════════
+
 name: CI
+
+# Opt into Node.js 24 for all actions (checkout, setup-node, upload-artifact, github-script).
+# Silences the Node 20 deprecation warnings. Node 24 becomes the forced default on 2026-06-02.
+# See: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
   push:
     branches:
-      - master
+      - master      # Runs after every merge — keeps post-merge build history green
     tags:
-      - "v*"
+      - "v*"        # Full lint → build → release pipeline on version tags (e.g. v1.2.0)
   pull_request:
     branches:
-      - master
+      - master      # Runs on every PR targeting master — the merge gate
 
 jobs:
-  build:
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job 1 · Lint
+  # ────────────────────────────────────────────────────────────────────────────
+  # Runs ESLint on the entire src/ tree.
+  #
+  # Why a separate job?
+  #   • Lint failures are reported immediately without waiting for a full build,
+  #     saving CI minutes and giving contributors faster feedback.
+  #   • The "Lint" job name is what you add in branch protection as the required
+  #     status check — see the setup block in the header above.
+  #
+  # Permissions: contents:read — only needs to clone the repository.
+  # ────────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read    # Principle of least privilege — no writes needed here
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'    # Caches ~/.npm between runs — speeds up installs on repeat pushes
+
+      - name: Install dependencies
+        # npm ci reads exact versions from package-lock.json (reproducible installs)
+        # and never modifies the lockfile — safe and correct for CI.
+        run: npm ci
+
+      - name: Run ESLint
+        # Non-zero exit code fails this job and blocks the build job (needs: lint).
+        # Fix locally with: npm run lint:fix
+        run: npm run lint
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job 2 · Build
+  # ────────────────────────────────────────────────────────────────────────────
+  # Compiles the extension for all three browsers, produces the store-submission
+  # packages, uploads per-browser artifacts, and posts a helpful PR comment.
+  #
+  # Permissions:
+  #   contents:read       — clone the repo; no storage writes needed here
+  #   pull-requests:write — post / update the artifact summary comment on PRs
+  #                         (gracefully skipped on fork PRs where write is blocked)
+  # ────────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: lint       # Lint must pass before we spend CI minutes building
+    permissions:
+      contents: read
+      pull-requests: write  # Required to post the artifact comment on PRs
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node 18
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
-      
-      - name: Install Dependencies
+
+      - name: Install dependencies
         run: npm ci
 
-      - name: Lint Source
-        run: npm run lint
+      # ── Manifest version guard ───────────────────────────────────────────────
+      # Only runs on tag pushes (e.g. git tag v1.2.0 && git push origin v1.2.0).
+      # Fails the build if the "version" field in manifest.json doesn't match the
+      # tag — catches the common mistake of tagging without bumping the version.
+      #
+      # To fix a mismatch:
+      #   1. Update "version" in manifest.json and commit
+      #   2. Delete the bad tag: git tag -d v1.2.0 && git push --delete origin v1.2.0
+      #   3. Re-tag and push: git tag v1.2.0 && git push origin v1.2.0
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Verify manifest version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "❌  Version mismatch:"
+            echo "    Git tag:       v$TAG_VERSION"
+            echo "    manifest.json: $MANIFEST_VERSION"
+            echo ""
+            echo "    Update \"version\" in manifest.json to match the tag, commit, then re-push the tag."
+            exit 1
+          fi
+          echo "✅  Version match: $MANIFEST_VERSION"
 
-      - name: Build Extension
+      - name: Build extension (Chromium + Firefox)
+        # Outputs:
+        #   dist/chromium/  →  Chrome, Edge, and Brave (all Chromium-based)
+        #   dist/firefox/   →  Firefox (Gecko-based)
         run: npm run build:all
 
-      - name: Zip Artifacts
-        run: npm run zip
+      # ── Produce all browser packages ─────────────────────────────────────────
+      # npm run zip   → SecretsSanta-chromium.zip + SecretsSanta-firefox.zip
+      # Edge copy     → Chromium build is fully compatible with Edge Add-ons.
+      #                 We copy and label it explicitly so store submissions and
+      #                 reviewer downloads have an unambiguous filename.
+      # xpi:firefox   → SecretsSanta-firefox.xpi for Firefox Developer Edition
+      #                 and Firefox Nightly (drag-and-drop install or about:addons).
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Package extensions for all browsers
+        run: |
+          npm run zip
+          cp SecretsSanta-chromium.zip SecretsSanta-edge.zip
+          npm run xpi:firefox
 
-      # For PRs and pushes to master
-      - name: Upload Build Artifacts
+      # ── Write a job summary ──────────────────────────────────────────────────
+      # Visible on the Actions run page under the "Summary" tab.
+      # Shows the built version, triggering event, and sideload instructions for
+      # each package — useful context for reviewers checking build artifacts.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Write job summary
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          {
+            echo "## 🎁 SecretsSanta — Build Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| **Version** | \`$VERSION\` |"
+            echo "| **Commit** | \`${{ github.sha }}\` |"
+            echo "| **Trigger** | \`${{ github.event_name }}\` on \`${{ github.ref_name }}\` |"
+            echo ""
+            echo "### Packages"
+            echo ""
+            echo "| File | Browser | How to sideload |"
+            echo "|---|---|---|"
+            echo "| \`SecretsSanta-chromium.zip\` | Chrome · Brave | \`chrome://extensions\` → Developer mode → Load unpacked |"
+            echo "| \`SecretsSanta-edge.zip\` | Edge | \`edge://extensions\` → Developer mode → Load unpacked |"
+            echo "| \`SecretsSanta-firefox.zip\` | Firefox | \`about:debugging\` → This Firefox → Load Temporary Add-on → \`manifest.json\` |"
+            echo "| \`SecretsSanta-firefox.xpi\` | Firefox Dev/Nightly | Drag-and-drop into Firefox or install via \`about:addons\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Upload one artifact per browser (PR / master-push runs) ─────────────
+      # Split into three separate artifacts so reviewers can download exactly the
+      # browser package they need without unpacking a combined bundle.
+      #
+      #   extension-chrome   — zip + unpacked dist/ for Chrome and Brave
+      #   extension-edge     — zip only (same Chromium build, explicitly labelled)
+      #   extension-firefox  — zip + xpi + unpacked dist/ for Firefox
+      #
+      # Retention: 14 days — long enough for PR review cycles, short enough to
+      # avoid unbounded artifact storage growth on routine CI runs.
+      # Download: Actions run → Summary → Artifacts section.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Upload Chrome artifact
         if: "!startsWith(github.ref, 'refs/tags/v')"
         uses: actions/upload-artifact@v4
         with:
-          name: dist-artifacts
+          name: extension-chrome
           path: |
-            dist/chromium
-            dist/firefox
             SecretsSanta-chromium.zip
-            SecretsSanta-firefox.zip
+            dist/chromium
+          retention-days: 14
 
-      # For Pushes to tags (Releases)
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
+      - name: Upload Edge artifact
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@v4
         with:
+          name: extension-edge
+          path: SecretsSanta-edge.zip
+          retention-days: 14
+
+      - name: Upload Firefox artifact
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-firefox
+          path: |
+            SecretsSanta-firefox.zip
+            SecretsSanta-firefox.xpi
+            dist/firefox
+          retention-days: 14
+
+      # ── Post / update a build comment on PRs ─────────────────────────────────
+      # Adds a comment listing the per-browser artifacts with direct links to the
+      # Actions run.  On re-runs (force-push, fixup commit, etc.) the existing
+      # comment is updated instead of creating a duplicate.
+      #
+      # Notes:
+      #   • Requires pull-requests:write (declared in this job's permissions).
+      #   • continue-on-error: true — fork PRs don't receive write access from
+      #     GitHub and will silently skip this step rather than failing the build.
+      #   • The comment marker string "SecretsSanta — Build Ready" is used to
+      #     find the existing comment for updates.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Post artifact links comment on PR
+        if: github.event_name == 'pull_request'
+        continue-on-error: true   # Fork PRs won't have write access — never fail the build over this
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              '## 🎁 SecretsSanta — Build Ready',
+              '',
+              `Download the sideloadable packages from the [Actions run](${runUrl}):`,
+              '',
+              '| Artifact | Browser | How to sideload |',
+              '|---|---|---|',
+              '| `extension-chrome` | Chrome · Brave | `chrome://extensions` → Developer mode → Load unpacked |',
+              '| `extension-edge` | Edge | `edge://extensions` → Developer mode → Load unpacked |',
+              '| `extension-firefox` | Firefox | `about:debugging` → This Firefox → Load Temporary Add-on → `manifest.json` |',
+              '',
+              '> The `extension-firefox` artifact also includes a `.xpi` for Firefox Developer Edition / Nightly.',
+              '',
+              '<sub>_This comment is updated on each new push to this PR._</sub>',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            // Find the bot's previous comment for this PR (if any) and update it
+            // instead of posting a duplicate on every push.
+            const marker = 'SecretsSanta \u2014 Build Ready';
+            const existing = comments.find(
+              c => c.user.login === 'github-actions[bot]' && c.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      # ── Stash release packages for the release job ───────────────────────────
+      # The release job runs in a fresh VM with no build output, so all four
+      # packages are uploaded here and downloaded there.
+      # Short retention is fine — the release job runs immediately after.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Upload release packages (tag runs only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zips
+          path: |
+            SecretsSanta-chromium.zip
+            SecretsSanta-edge.zip
+            SecretsSanta-firefox.zip
+            SecretsSanta-firefox.xpi
+          retention-days: 3
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job 3 · Release  (tag pushes only)
+  # ────────────────────────────────────────────────────────────────────────────
+  # Creates a GitHub Release and attaches all four browser packages as
+  # downloadable assets. Only runs when a v* tag is pushed.
+  #
+  # How to cut a release:
+  #   1. Bump "version" in manifest.json and commit:
+  #        git commit -am "chore: bump version to X.Y.Z"
+  #   2. Push the commit and the tag together:
+  #        git push origin master && git tag vX.Y.Z && git push origin vX.Y.Z
+  #   3. This job creates the release and uploads all packages automatically.
+  #
+  # Release notes are auto-generated from merged PR titles and commit messages.
+  # You can edit the release body on GitHub after creation if needed.
+  #
+  # Permissions: contents:write — required to create GitHub Releases and upload
+  # assets. Deliberately isolated to this job so lint and build remain read-only.
+  # ────────────────────────────────────────────────────────────────────────────
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write   # Required to create the release and upload zip assets
+
+    steps:
+      - name: Download release packages
+        # Fetch the packages built and stashed by the build job.
+        uses: actions/download-artifact@v4
+        with:
+          name: release-zips
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Auto-generate release notes from PR titles and commit messages.
+          # Edit the release on GitHub after creation to add a manual changelog summary.
+          generate_release_notes: true
           files: |
             SecretsSanta-chromium.zip
+            SecretsSanta-edge.zip
             SecretsSanta-firefox.zip
+            SecretsSanta-firefox.xpi

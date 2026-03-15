@@ -49,12 +49,12 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       cfg.STORAGE.setCollections(next, () => {
         if (next.length === 0) {
           cfg.savedList.innerHTML = "";
-          cfg.setStatus("No collections remaining.");
+          cfg.setStatus("Santa deleted the last collection.");
           return;
         }
         const scoped = afterRenderHost ? next.filter((c) => (c.host || "") === afterRenderHost) : next;
         renderList(scoped);
-        cfg.setStatus("Collection deleted.");
+        cfg.setStatus("Santa deleted that collection.");
       });
     });
   }
@@ -147,7 +147,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
       item.addEventListener("click", () => {
         if (!collection.keys || Object.keys(collection.keys).length === 0) {
-          cfg.setStatus("This collection is empty.");
+          cfg.setStatus("Santa says this collection is empty.");
           return;
         }
         onLoadCollection(collection);
