@@ -50,6 +50,11 @@ let currentDataSource = "none";
 let currentScheme = "https";
 let currentDc = "";
 
+// Monotonically increasing counter incremented on every new Load click.
+// pollForToken() captures the current value; if the counter advances before
+// the poll resolves, the stale cycle self-cancels without touching the UI.
+let loadGeneration = 0;
+
 const SENSITIVE_REGEX = CONSTANTS.UI.SENSITIVE_KEY_REGEX;
 
 // Sets the user-visible status banner text at the top of the popup.
@@ -351,12 +356,15 @@ function updateSavedAvailability() {
 /* collections moved to collections.js */
 
 // Polls the background every 500 ms for a validated token for `host`, for up to `timeoutMs` ms.
-// Resolves with the first non-empty token found, or "" on timeout.
-function pollForToken(host, timeoutMs) {
+// `gen` must match `loadGeneration` throughout — if the user clicks Load again the counter
+// advances and the stale poll self-cancels immediately (resolves "").
+function pollForToken(host, timeoutMs, gen) {
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs;
     function check() {
+      if (loadGeneration !== gen) { resolve(""); return; } // stale cycle — abandon
       chrome.runtime.sendMessage({ type: CONSTANTS.MESSAGE_TYPES.FETCH_KEYS, host }, (res) => {
+        if (loadGeneration !== gen) { resolve(""); return; } // raced with a new Load click
         const token = String(res?.token || "");
         if (token) { resolve(token); return; }
         if (Date.now() >= deadline) { resolve(""); return; }
@@ -367,16 +375,21 @@ function pollForToken(host, timeoutMs) {
   });
 }
 
-// Shown after a session-missing failure. Polls for a token for up to 60 s; when one
-// arrives the load retries automatically. If the window expires, leaves a final message.
+// Shown after a session-missing failure. Shows a pulsing status while polling for a token
+// (up to 60 s); when one arrives the load retries automatically.
+// Passes attempt=1 to the retry so a second missing-session error just shows a message
+// rather than spawning another 60-second wait cycle.
 function waitForTokenAndRetry(ctx, tabId) {
-  pollForToken(ctx.host, 60000).then((token) => {
+  const gen = loadGeneration; // capture — advances if user clicks Load again
+  setStatus("Santa couldn't detect your Consul session. Please log in to the Consul UI and browse to a KV path — Santa will load your secrets automatically once it captures your session. ⌛");
+  pollForToken(ctx.host, 60000, gen).then((token) => {
+    if (loadGeneration !== gen) return; // user started a new load — do nothing
     if (!token) {
       setStatus("Santa still couldn't detect a Consul session. Log in to the Consul UI and click Load again when ready.");
       return;
     }
     showLoader(true);
-    loadSecretsForContext(ctx, tabId);
+    loadSecretsForContext(ctx, tabId, 1); // attempt=1 prevents re-triggering this wait cycle
   });
 }
 
@@ -432,8 +445,7 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
 
         if (isMissingSession) {
           showLoader(false);
-          setStatus("Santa couldn't detect your Consul session. Please log in to the Consul UI and browse to a KV path — Santa will load your secrets automatically once it captures your session.");
-          waitForTokenAndRetry(ctx, tabId);
+          waitForTokenAndRetry(ctx, tabId); // sets its own status + starts polling
           return;
         }
         if (isRejectedToken) {
@@ -483,6 +495,7 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
 }
 
 loadBtn.addEventListener("click", async () => {
+  loadGeneration += 1; // cancel any in-flight waitForTokenAndRetry from a previous click
   resetUI();
   showLoader(true);
 
@@ -520,6 +533,7 @@ loadBtn.addEventListener("click", async () => {
   }
 
   hideHostPermissionPrompt();
+  setStatus("Santa is looking for your Consul session…");
   await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
   loadSecretsForContext(ctx, tab.id);
 });
