@@ -350,6 +350,36 @@ function updateSavedAvailability() {
 
 /* collections moved to collections.js */
 
+// Polls the background every 500 ms for a validated token for `host`, for up to `timeoutMs` ms.
+// Resolves with the first non-empty token found, or "" on timeout.
+function pollForToken(host, timeoutMs) {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    function check() {
+      chrome.runtime.sendMessage({ type: CONSTANTS.MESSAGE_TYPES.FETCH_KEYS, host }, (res) => {
+        const token = String(res?.token || "");
+        if (token) { resolve(token); return; }
+        if (Date.now() >= deadline) { resolve(""); return; }
+        setTimeout(check, 500);
+      });
+    }
+    check();
+  });
+}
+
+// Shown after a session-missing failure. Polls for a token for up to 60 s; when one
+// arrives the load retries automatically. If the window expires, leaves a final message.
+function waitForTokenAndRetry(ctx, tabId) {
+  pollForToken(ctx.host, 60000).then((token) => {
+    if (!token) {
+      setStatus("Santa still couldn't detect a Consul session. Log in to the Consul UI and click Load again when ready.");
+      return;
+    }
+    showLoader(true);
+    loadSecretsForContext(ctx, tabId);
+  });
+}
+
 function loadSecretsForContext(ctx, tabId, attempt = 0) {
   setStatus("Santa is fetching your keys…");
   chrome.runtime.sendMessage(
@@ -381,17 +411,32 @@ function loadSecretsForContext(ctx, tabId, attempt = 0) {
           friendly = message;
         }
 
-        // Only retry on token-related failures — "permission denied" and "acl not found" suggest
-        // the token may have just expired and a fresh capture could succeed. Do NOT retry on
-        // generic "access" strings since those could be genuine permission denials, not session
-        // expiry, and retrying would just waste a round trip.
-        const shouldRetry =
+        // "Missing session" — Consul returned an auth error and no token was captured at all.
+        // Prompt the user to interact with the Consul UI; poll for a token in the background
+        // and reload automatically once one is detected (up to 60 s).
+        const isMissingSession =
           attempt === 0 &&
           tabId &&
+          (lower.includes("grab your consul session") ||
+            lower.startsWith("santa is unable to get keys"));
+
+        // "Rejected token" — a token was captured but the server explicitly refused it.
+        // Run ensureTokenAvailable once more to capture a fresh token, then retry once.
+        const isRejectedToken =
+          attempt === 0 &&
+          tabId &&
+          !isMissingSession &&
           (lower.includes("acl not found") ||
             lower.includes("santa couldn't capture") ||
             lower.includes("permission denied"));
-        if (shouldRetry) {
+
+        if (isMissingSession) {
+          showLoader(false);
+          setStatus("Santa couldn't detect your Consul session. Please log in to the Consul UI and browse to a KV path — Santa will load your secrets automatically once it captures your session.");
+          waitForTokenAndRetry(ctx, tabId);
+          return;
+        }
+        if (isRejectedToken) {
           showLoader(true);
           setStatus("Trying to capture Consul session — please interact with the Consul UI if this takes a moment…");
           TOKEN.ensureTokenAvailable(tabId, ctx.host, ctx.dc, ctx.prefix).then(() => {
@@ -475,10 +520,7 @@ loadBtn.addEventListener("click", async () => {
   }
 
   hideHostPermissionPrompt();
-  const capturedToken = await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
-  if (!capturedToken) {
-    setStatus("No Consul session detected — if your Consul requires a token, log in to the Consul UI first, then click Load again.");
-  }
+  await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
   loadSecretsForContext(ctx, tab.id);
 });
 
@@ -499,10 +541,7 @@ grantPermissionBtn.addEventListener("click", async () => {
   showLoader(true);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id) {
-    const capturedToken = await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
-    if (!capturedToken) {
-      setStatus("Santa couldn't detect a Consul session — if your Consul requires a token, log in to the Consul UI first, then click Load again.");
-    }
+    await TOKEN.ensureTokenAvailable(tab.id, ctx.host, ctx.dc, ctx.prefix);
     loadSecretsForContext(ctx, tab.id);
   } else {
     showLoader(false);
