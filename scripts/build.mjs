@@ -197,8 +197,14 @@ async function buildTarget(target) {
   await rimraf(dist.root);
   await ensureDir(dist.root);
   await ensureDir(dist.assets);
-  await ensureDir(dist.content);
-  await copyDir(src.assets, dist.assets).catch(() => { });
+  if (target === "firefox") await ensureDir(dist.content);
+  // Only copy assets the extension actually uses at runtime.
+  // Store listing images (banners, screenshots, logo.svg, icon.png) are uploaded
+  // separately to the store dashboard — they must not bloat the extension package.
+  const extensionAssets = ["icon16.png", "icon32.png", "icon48.png", "icon128.png", "logo.png"];
+  for (const name of extensionAssets) {
+    await fs.copyFile(path.join(src.assets, name), path.join(dist.assets, name)).catch(() => {});
+  }
   await buildCss(dist);
   await buildPopupBundle(dist, target);
   await buildBackgroundBundle(dist, target);
