@@ -223,7 +223,7 @@ jobs:
       # ────────────────────────────────────────────────────────────────────────
       - name: Upload Chrome artifact
         if: "!startsWith(github.ref, 'refs/tags/v')"
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: extension-chrome
           path: SecretsSanta-chromium.zip
@@ -231,7 +231,7 @@ jobs:
 
       - name: Upload Edge artifact
         if: "!startsWith(github.ref, 'refs/tags/v')"
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: extension-edge
           path: SecretsSanta-edge.zip
@@ -239,7 +239,7 @@ jobs:
 
       - name: Upload Firefox artifact
         if: "!startsWith(github.ref, 'refs/tags/v')"
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: extension-firefox
           path: |
@@ -318,7 +318,7 @@ jobs:
       # ────────────────────────────────────────────────────────────────────────
       - name: Upload release packages (tag runs only)
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-zips
           path: |
