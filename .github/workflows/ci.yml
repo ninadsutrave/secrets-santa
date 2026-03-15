@@ -358,7 +358,7 @@ jobs:
     steps:
       - name: Download release packages
         # Fetch the packages built and stashed by the build job.
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: release-zips
 
