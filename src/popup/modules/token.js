@@ -1,3 +1,40 @@
+/* Token capture orchestration — popup side.
+ *
+ * The single public entry point is ensureTokenAvailable(tabId, host, dc, prefix).
+ * It runs a layered capture strategy and resolves with a token string (or "" on failure).
+ *
+ * ── Capture layers (in order, each is a fallback for the previous) ────────────────────────────
+ *
+ *  Layer 1  webRequest passive capture (background.js)
+ *           Already running before the popup opens. If the user recently visited the Consul
+ *           UI, the background likely already has a token — FETCH_KEYS will return it immediately.
+ *
+ *  Layer 2  fetch / XHR hooks  (consul-token-bridge.js, MAIN world)
+ *           installTokenSniffer() injects the bridge script into the Consul tab's MAIN world.
+ *           Any Consul API call the page makes after injection will have its token captured.
+ *
+ *  Layer 3  Priming fetches  (consul-token-bridge.js, SS_PRIME)
+ *           primeTokenCaptureOnTab() sends an SS_PRIME message to trigger harmless Consul API
+ *           calls in the page context, giving layers 1–2 something to intercept immediately.
+ *
+ *  Polling (2 seconds, 50ms interval)
+ *           After layers 2–3 are started, we poll FETCH_KEYS every 50ms for up to 2 seconds.
+ *           webRequest is asynchronous — the token may arrive at any point in this window.
+ *
+ *  Layer 4  SS_SCAN re-scan
+ *           If polling finds nothing, we ask the bridge to re-scan localStorage/sessionStorage,
+ *           IndexedDB, and cookies in case the token was written to storage after page load.
+ *
+ *  Layer 5  captureAndStoreTokenFromConsulStorage (last resort)
+ *           Runs a direct executeScript in MAIN world to scan localStorage, sessionStorage,
+ *           and IndexedDB synchronously and validate the best candidate via /v1/acl/token/self.
+ *
+ * ── Single write path ─────────────────────────────────────────────────────────────────────────
+ *
+ *  captureAndStoreTokenFromConsulStorage sends a SET_TOKEN message to the background rather
+ *  than writing to chrome.storage directly. The background is the sole writer — this prevents
+ *  races where a direct popup write could be overwritten by a concurrent background validation. */
+
 globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
 (() => {
@@ -5,6 +42,8 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  /* Asks the background for the current validated token for a host.
+   * Returns "" if no token is stored or the stored token failed validation. */
   function fetchTokenFromBackground(host) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.FETCH_KEYS, host }, (res) => {
@@ -13,6 +52,10 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     });
   }
 
+  /* Validates a token by running a /v1/acl/token/self fetch directly inside the Consul tab's
+   * MAIN world (same origin as Consul). This avoids CORS restrictions that would block the same
+   * request from the extension popup or service worker on some deployments.
+   * Returns true if the token is accepted, false otherwise. */
   async function validateTokenOnTab(tabId, dc, token) {
     try {
       if (!chrome.scripting || !chrome.scripting.executeScript) {
@@ -58,12 +101,17 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     }
   }
 
+  /* Last-resort synchronous scan for a Consul token in the page's storage (Layer 5).
+   * Runs a MAIN-world executeScript that checks localStorage, sessionStorage, and IndexedDB
+   * for keys with Consul-related names, scores candidates, and returns the best match.
+   * The candidate is validated via /v1/acl/token/self (in validateTokenOnTab) before being stored.
+   * On success, sends SET_TOKEN to the background — the background is the sole writer. */
   async function captureAndStoreTokenFromConsulStorage(tabId, host, dc) {
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        func: () => {
+        func: async () => {
           const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           const uuidInText = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
           const plausibleToken = (value) => {
@@ -72,7 +120,10 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             if (uuidLike.test(v)) return v;
             const match = v.match(uuidInText);
             if (match?.[0] && uuidLike.test(match[0])) return match[0];
-            if (v.length < 20 || v.length > 256) return "";
+            // JWT format: three base64url segments (Consul Enterprise / HCP)
+            if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v) && v.length >= 20) return v;
+            // Generic opaque token — cap raised from 256 to 2048 for enterprise tokens
+            if (v.length < 20 || v.length > 2048) return "";
             if (/\s/.test(v)) return "";
             return v;
           };
@@ -131,20 +182,64 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             tryAdd(k, sessionStorage.getItem(k));
           }
           candidates.sort((a, b) => b.score - a.score);
-          return candidates[0]?.value || "";
+          const best = candidates[0]?.value || "";
+          if (best) return best;
+
+          // IndexedDB scan — covers Consul UI 1.16+ which stores the ACL token in IDB, not localStorage.
+          // indexedDB.databases() is available on Chrome 72+ and Firefox 126+.
+          try {
+            if (typeof indexedDB !== "undefined" && indexedDB.databases) {
+              const dbs = await indexedDB.databases();
+              for (const { name } of dbs) {
+                if (!name) continue;
+                const found = await new Promise((resolve) => {
+                  const req = indexedDB.open(name);
+                  req.onerror = () => resolve("");
+                  req.onsuccess = () => {
+                    const db = req.result;
+                    const relevant = Array.from(db.objectStoreNames).filter((s) => {
+                      const l = s.toLowerCase();
+                      return l.includes("token") || l.includes("acl") || l.includes("auth") ||
+                             l.includes("session") || l.includes("consul");
+                    });
+                    if (!relevant.length) { db.close(); resolve(""); return; }
+                    let result = "";
+                    let pending = relevant.length;
+                    const done = (val) => {
+                      if (val && !result) result = val;
+                      if (--pending === 0) { db.close(); resolve(result); }
+                    };
+                    for (const storeName of relevant) {
+                      try {
+                        const tx = db.transaction(storeName, "readonly");
+                        const req2 = tx.objectStore(storeName).getAll();
+                        req2.onsuccess = () => done(findUuidDeep(req2.result));
+                        req2.onerror = () => done("");
+                      } catch { done(""); }
+                    }
+                  };
+                });
+                if (found) return found;
+              }
+            }
+          } catch { }
+          return "";
         }
       });
       const token = String(results?.[0]?.result || "");
       if (!token) return "";
       const validOnTab = await validateTokenOnTab(tabId, dc, token);
       if (validOnTab) {
-        globalThis.SECRETS_SANTA.STORAGE.setTokenForHost(host, token);
-        await new Promise((resolve) =>
-          chrome.runtime.sendMessage({ type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host }, () =>
-            resolve()
+        // Let the background be the single source of truth — it validates and stores atomically.
+        // Storing directly from the popup AND via SET_TOKEN creates a race where background
+        // validation might clear a token the popup just wrote, causing inconsistent state.
+        const stored = await new Promise((resolve) =>
+          chrome.runtime.sendMessage(
+            { type: globalThis.SECRETS_SANTA.CONSTANTS.MESSAGE_TYPES.SET_TOKEN, token, host },
+            (res) => resolve(res?.ok === true)
           )
         );
-        return token;
+        return stored ? token : "";
       }
       return "";
     } catch {
@@ -152,6 +247,23 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     }
   }
 
+  /* Sets up two injection phases so that any Consul API request made after the popup opens
+   * will have its X-Consul-Token captured regardless of which world it originates from.
+   *
+   * Phase 1 — ISOLATED world listener (default content-script world)
+   *   Installs a window.addEventListener("SECRETS_SANTA_TOKEN") handler in the content script's
+   *   ISOLATED world. When the MAIN world bridge fires a CustomEvent carrying the token, this
+   *   listener picks it up and forwards it to the background via chrome.runtime.sendMessage.
+   *   The guard window.__ss_listener_installed prevents double-registration if the popup is
+   *   opened multiple times without a page reload.
+   *
+   * Phase 2 — MAIN world injection (world: "MAIN")
+   *   Injects wrapFetch() and wrapXHR() into the page's own JS context so that every subsequent
+   *   same-origin Consul API call emits its X-Consul-Token header as a "SECRETS_SANTA_TOKEN"
+   *   CustomEvent (caught by Phase 1). The guard window.__ss_fetch_wrapped prevents double-
+   *   wrapping the prototype chain on repeated popup opens.
+   *   Also fires two priming fetches immediately (/v1/agent/self and /v1/kv/…) so that the
+   *   hooks installed above have real authenticated Consul traffic to intercept right away. */
   async function installTokenSniffer(tabId, dc, prefix) {
     try {
       await chrome.scripting.executeScript({
@@ -277,7 +389,11 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
             const dc = String(dcArg || "");
             const prefix = String(prefixArg || "");
             const suffix = dc ? `?dc=${encodeURIComponent(dc)}` : "";
-            const kvPath = prefix ? `/v1/kv/${encodeURI(prefix)}` : "/v1/kv/";
+            // Encode each path segment individually so special chars don't corrupt the query string.
+            const encodedPrefix = prefix
+              ? prefix.split("/").filter(Boolean).map(encodeURIComponent).join("/")
+              : "";
+            const kvPath = encodedPrefix ? `/v1/kv/${encodedPrefix}/` : "/v1/kv/";
             const kvUrl = `${kvPath}${suffix}${suffix ? "&" : "?"}keys&separator=/`;
             fetch("/v1/agent/self" + suffix, { credentials: "include" }).catch(() => { });
             fetch(kvUrl, { credentials: "include" }).catch(() => { });
@@ -287,12 +403,32 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
     } catch { }
   }
 
+  /* Sends an SS_PRIME message to the consul-token-bridge already running in the Consul tab.
+   * The bridge responds by issuing harmless Consul API requests (/v1/agent/self and a KV list)
+   * using the page's own fetch, giving the fetch/XHR hooks (Phase 2) and the background
+   * webRequest listener real authenticated traffic to intercept immediately.
+   * Silently no-ops if the bridge is not installed (e.g. page not yet loaded). */
   async function primeTokenCaptureOnTab(tabId, dc, prefix) {
     try {
       await chrome.tabs.sendMessage(tabId, { type: "SS_PRIME", dc, prefix });
     } catch { }
   }
 
+  /* Main public entry point — orchestrates the full token capture cascade.
+   *
+   * Order of operations:
+   *   1. installTokenSniffer  — inject ISOLATED-world CustomEvent listener (Phase 1) and
+   *                             MAIN-world fetch/XHR hooks + priming fetches (Phase 2)
+   *   2. primeTokenCaptureOnTab — send SS_PRIME to the already-installed bridge as a second
+   *                               trigger for priming in case Phase 2 didn't self-prime
+   *   3. Poll fetchTokenFromBackground every 50 ms for up to 2 s (40 × 50 ms)
+   *      → catches tokens that arrive asynchronously via webRequest or the fetch/XHR hooks
+   *   4. SS_SCAN — ask the bridge to re-scan localStorage/sessionStorage/IndexedDB/cookies,
+   *      then poll 1 s more (20 × 50 ms) for any token that was written to storage after load
+   *   5. captureAndStoreTokenFromConsulStorage — direct MAIN-world storage read + in-tab
+   *      validation as a last resort when all async layers have failed
+   *
+   * Returns the validated token string on success, or "" if all layers are exhausted. */
   async function ensureTokenAvailable(tabId, host, dc, prefix) {
     await installTokenSniffer(tabId, dc, prefix);
     await primeTokenCaptureOnTab(tabId, dc, prefix);

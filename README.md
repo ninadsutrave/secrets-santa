@@ -2,30 +2,30 @@
 
 # 🎅 SecretsSanta
 
-SecretsSanta is a Chrome extension that helps developers fetch, view, copy, and compare secrets stored in Consul KV — safely and effortlessly.
+SecretsSanta is a browser extension that helps developers fetch, view, copy, and compare secrets stored in Consul KV — safely and effortlessly, directly from the Consul UI.
 
 This is an open source initiative designed to make Consul KV management smoother for everyone.
 
 ## ✨ Features
 
 - **Load & View**: Fetches keys/values from your current Consul KV page.
-- **Auto-Auth**: Captures your Consul token automatically (no manual copy-paste).
+- **Auto-Auth**: Captures your Consul token automatically — no manual copy-paste, no config.
 - **Secure**: Values are masked by default. Copying always yields the raw value.
 - **Edit & Upload**: Edit values inline or upload bulk keys via `.env` files or JetBrains format.
 - **Compare**: Save snapshots of KV paths and diff them (e.g. Stage vs Prod).
 - **Export**: Download keys as `.env` or copy in JetBrains format.
 - **Modern UI**: Clean, responsive interface with a dark mode that respects your eyes.
 
-## 🌐 Availability
+## 🌐 Install from the Store
 
 SecretsSanta works on all Chromium-based browsers and Firefox.
 
-- **Chrome**: [Install from Web Store](https://chrome.google.com/webstore/detail/secretssanta/placeholder)
-- **Brave**: Compatible via Chrome Web Store.
-- **Edge**: [Install from Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/placeholder)
-- **Firefox**: [Install from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/secretssanta/placeholder)
-
-*(Note: Store links are placeholders until published. You can install manually using the steps below.)*
+| Browser | Link |
+|---|---|
+| **Chrome** | [Chrome Web Store](https://chromewebstore.google.com/detail/secretssanta/mfppamekfnjjnpgfpjhdgomnpobadhfe) |
+| **Edge** | [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/consul-kv-viewer-secret/pjkphinghfbmakbabohbaklnbplgmcbk) |
+| **Firefox** | [Firefox Add-ons](https://addons.mozilla.org/en-GB/addon/secretssanta-consul-kv-manager) |
+| **Brave** | Compatible via the Chrome Web Store link above |
 
 ## 🔗 Project Links
 
@@ -35,180 +35,143 @@ SecretsSanta works on all Chromium-based browsers and Firefox.
 
 ### Prerequisites
 
-- **Git**: to clone the repository.
-- **Node.js** (optional): strictly speaking not required to run the extension as it uses vanilla JS, but useful if you want to use any future build tools. Currently, the project is zero-dependency vanilla JS/HTML/CSS.
+- **Git** to clone the repository
+- **Node.js 18+** for the build step (`npm run build`)
 
-### Installation (Manual)
+### Installation (Local Build)
 
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/ninadsutrave/secrets-santa.git
-    cd secrets-santa
-    ```
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/ninadsutrave/secrets-santa.git
+   cd secrets-santa
+   ```
 
-2.  **Chrome / Brave / Edge**:
-    - Open `chrome://extensions` (or `edge://extensions`).
-    - Enable **Developer mode** (top right toggle).
-    - Click **Load unpacked**.
-    - Select the `secrets-santa` folder you just cloned.
+2. Install build tooling:
+   ```bash
+   npm ci
+   ```
 
-3.  **Firefox**:
-    - Open `about:debugging#/runtime/this-firefox`.
-    - Click **Load Temporary Add-on...**.
-    - Select the `manifest.json` file from the cloned folder.
+3. Build the extension:
+   ```bash
+   npm run build:all
+   ```
+   This produces `dist/chromium/` and `dist/firefox/`.
+
+4. Load in your browser:
+
+   **Chrome / Brave / Edge**
+   - Open `chrome://extensions` (or `edge://extensions`)
+   - Enable **Developer mode** (top-right toggle)
+   - Click **Load unpacked** → select `dist/chromium/`
+
+   **Firefox**
+   - Open `about:debugging#/runtime/this-firefox`
+   - Click **Load Temporary Add-on…**
+   - Select `dist/firefox/manifest.json`
 
 ## 📖 Usage
 
-1.  **Navigate** to a Consul KV path in your browser (e.g. `http://consul.local/ui/dc1/kv/my-service/`).
-2.  **Open SecretsSanta** (Click the extension icon or press `Ctrl+Shift+S` / `Cmd+Shift+S`).
-3.  **Load Secrets**: Click the button. If prompted, grant permission for the host.
-4.  **Manage**:
-    - Click `⧉` to copy values.
-    - Click `✎` to edit inline.
-    - Click `⟦⟧` to view/copy pretty-printed JSON.
-    - Use **Upload Key Values** to bulk create/update keys.
-    - Use the **Save** icon to snapshot the current view for later comparison.
+1. **Navigate** to a Consul KV path (e.g. `http://consul.local/ui/dc1/kv/my-service/`).
+2. **Open SecretsSanta** — click the toolbar icon or press `Ctrl+Shift+S` / `Cmd+Shift+S`.
+3. **Grant permission** for the Consul host when prompted (one-time, per host).
+4. **Load Secrets** — the extension captures your session token automatically if you're logged in.
+5. **Manage your keys**:
+   - `⧉` — copy value
+   - `✎` — edit inline
+   - `⟦⟧` — view / copy pretty-printed JSON
+   - **Upload Key Values** — bulk create/update from a `.env` or JetBrains file
+   - **Save** — snapshot the current view for later comparison
 
 ## 🖼️ Preview
- 
- <table>
-   <tr>
-     <td align="center">
-       <img src="assets/screenshot1.png" alt="KV table view (mask, copy, edit, JSON)" width="340" /><br/>
-       <sub>KV table view (mask, copy, edit, JSON)</sub>
-     </td>
-     <td align="center">
-       <img src="assets/screenshot2.png" alt="Compare stage vs production key values" width="340" /><br/>
-       <sub>Compare stage vs production key values</sub>
-     </td>
-   </tr>
- </table>
 
-## 🧱 Build & Package (dist/)
+<table>
+  <tr>
+    <td align="center">
+      <img src="assets/screenshot1.png" alt="KV table view (mask, copy, edit, JSON)" width="340" /><br/>
+      <sub>KV table view — mask, copy, edit, JSON</sub>
+    </td>
+    <td align="center">
+      <img src="assets/screenshot2.png" alt="Compare stage vs production key values" width="340" /><br/>
+      <sub>Compare stage vs production key values</sub>
+    </td>
+  </tr>
+</table>
 
-Generate a clean, minified `dist/` folder with one JS per context:
+## 🔑 Token Capture Architecture
 
-1. Install tooling
-   ```bash
-   npm install
-   ```
-2. Build bundled dist
-   ```bash
-   npm run build
-   ```
-   Produces:
-   - dist/popup.html (rewritten to one script)
-   - dist/popup.js (single bundled, minified popup script)
-   - dist/background.js (single bundled, minified service worker)
-   - dist/styles.css
-   - dist/assets/* (copied from assets/)
-   - dist/manifest.json (based on root manifest, with corrected entry paths)
+SecretsSanta never asks you to paste a token. It uses a layered passive-capture approach so the first layer that succeeds provides the session:
 
-3. Zip the `dist/` folder
-   ```bash
-   npm run zip
-   ```
-   Creates SecretsSanta-dist.zip at project root.
+| # | Layer | Where | Notes |
+|---|---|---|---|
+| 1 | `webRequest.onBeforeSendHeaders` | Background SW | Passively intercepts `X-Consul-Token` from every outgoing Consul API request. Zero user interaction required — most reliable layer. |
+| 2 | `fetch` / `XHR` hooks (MAIN world) | Injected content script | Wraps `window.fetch` and `XMLHttpRequest` inside the page's JS context so tokens sent by the Consul SPA are captured even before the response returns. |
+| 3 | Priming fetches (`SS_PRIME`) | Injected content script | Fires harmless `/v1/agent/self` and `/v1/kv/…?keys` requests in the page context so layers 1 and 2 have something to intercept immediately. |
+| 4 | `localStorage` / `sessionStorage` scan | MAIN world executeScript | Direct storage read; validated against `/v1/acl/token/self` before use. |
+| 5 | `IndexedDB` scan | MAIN world executeScript | Covers Consul UI 1.16+ which stores the ACL token in IDB, not `localStorage`. |
+| 6 | `chrome.cookies` API | Background SW | Reads Consul-domain cookies directly; works even when the tab is inactive or the content script failed to inject. |
 
-4. Notes
-   - Shortcut: set Cmd+Shift+S (mac) or Ctrl+Shift+S (Windows/Linux) in chrome://extensions/shortcuts for “Open SecretsSanta”.
-   - Permissions and optional host permissions are taken directly from the root manifest.json.
-   - Ensure icons exist under `assets/` and paths in `manifest.json` point to them.
+**Token validation** uses a tri-state result (`"valid"` / `"invalid"` / `"unreachable"`) so a network error never causes a valid token to be discarded.
+
+**Token storage** uses `chrome.storage.session` on Chromium 102+ — tokens are never written to disk and are automatically cleared when the browser closes. Firefox falls back to `chrome.storage.local` (session storage is not yet available in Firefox MV3).
 
 ## 🧭 Build Targets
 
-- Chromium family
-  - `npm run build:chromium` → outputs to `dist/chromium/`
-- Firefox
-  - `npm run build:firefox` → outputs to `dist/firefox/`
-- Both
-  - `npm run build:all`
-- Packages
-  - `npm run zip` → produces SecretsSanta-chromium.zip and SecretsSanta-firefox.zip
-  - `npm run xpi:firefox` → produces SecretsSanta-firefox.xpi (for Dev/Nightly testing)
+| Command | Output |
+|---|---|
+| `npm run build:chromium` | `dist/chromium/` — load into Chrome, Edge, or Brave |
+| `npm run build:firefox` | `dist/firefox/` — load into Firefox |
+| `npm run build:all` | Both targets |
+| `npm run zip` | `SecretsSanta-chromium.zip` + `SecretsSanta-firefox.zip` |
+| `npm run xpi:firefox` | `SecretsSanta-firefox.xpi` (Firefox Dev / Nightly) |
 
 ## 🛠️ Development & Contribution
 
-We welcome contributions! This project is open source.
+We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md) for a full walkthrough.
 
-### How to Contribute
+### Quick Start
 
-1.  **Fork** the repository on GitHub.
-2.  **Clone** your fork locally.
-3.  **Create a branch** for your feature or fix.
-4.  **Make changes**: The codebase uses modular vanilla JavaScript (ES modules) in `src/popup/modules/`. No build step is required for development.
-5.  **Lint your code**: Run `npm run lint` to ensure your changes comply with the project's code style. **All PRs must pass the CI linter to be merged into master.**
-6.  **Test**:
-    - Reload the extension in your browser (`chrome://extensions` -> click refresh icon on the card).
-    - Verify functionality on a real Consul instance or a local dev agent (`consul agent -dev`).
-7.  **Push** your branch and open a **Pull Request** to `https://github.com/ninadsutrave/secrets-santa`.
+1. **Fork** and **clone** the repo.
+2. **Install** tooling: `npm ci`
+3. **Create a branch**: `git checkout -b fix/my-fix` or `feat/my-feature`
+4. **Make changes** in `src/` — the codebase is vanilla JS/HTML/CSS, no framework.
+5. **Lint**: `npm run lint` (auto-fix: `npm run lint:fix`) — CI will block the merge if lint fails.
+6. **Build & test**: `npm run build:all`, then load `dist/chromium/` (Chrome/Edge/Brave) or `dist/firefox/` in your browser.
+7. **Open a PR** to `master`.
 
-### Testing
+> **CI builds automatically.** Every PR triggers a full lint → build pipeline. Once the build passes, a bot comment is posted on the PR with direct download links for each browser's sideloadable package — no local build needed to test the PR.
 
-Since this is a browser extension, testing is primarily manual:
-- **Load**: Verify keys load correctly from a Consul page.
-- **Token**: Ensure auth works without manual token entry.
-- **CRUD**: Try editing a value and uploading a .env file.
-- **Diff**: Save two different paths (e.g. `/app/dev` and `/app/prod`) and try the Compare feature.
+### Local Testing (Consul Dev Agent)
 
-### Local Testing (Consul UI)
+```bash
+# Install Consul (macOS)
+brew install consul
 
-1. Install Consul
-   - macOS:
-     ```bash
-     brew install consul
-     ```
-   - Linux:
-     - Debian/Ubuntu (using a package manager or downloaded binary):
-       ```bash
-       # If available via your package manager
-       sudo apt-get update && sudo apt-get install consul || true
-       # Or download a release and place the binary on PATH
-       ```
-     - Fedora/CentOS:
-       ```bash
-       sudo dnf install consul || sudo yum install consul || true
-       ```
-   - Windows:
-     ```powershell
-     winget install HashiCorp.Consul
-     # or
-     choco install consul
-     ```
+# Start a local dev agent (UI at http://localhost:8500)
+consul agent -dev
 
-2. Start a local dev agent
-   ```bash
-   consul agent -dev
-   ```
-   - Opens the UI at http://localhost:8500/
-   - For a sample key:
-     ```bash
-     consul kv put app/dev/HELLO world
-     ```
+# Seed a test key
+consul kv put app/dev/HELLO world
+```
 
-3. Open the Consul KV page
-   - Navigate to http://localhost:8500/ui/dc1/kv/app/dev/
-
-4. Use SecretsSanta
-   - Open the extension and click Load Secrets
-   - If prompted, grant host permission for localhost:8500
-   - When ACL is enabled, sign into the UI; the extension captures the session token automatically and lists keys for paths you open
+Then navigate to `http://localhost:8500/ui/dc1/kv/app/dev/` and open SecretsSanta.
 
 ## 📚 Docs & Policies
 
-- Contributing: [CONTRIBUTING.md](./CONTRIBUTING.md)
-- Code of Conduct: [docs/CODE_OF_CONDUCT.md](./docs/CODE_OF_CONDUCT.md)
-- Security Policy: [docs/SECURITY.md](./docs/SECURITY.md)
-- Privacy Policy: [PRIVACY.md](./PRIVACY.md)
-- Changelog: [docs/CHANGELOG.md](./docs/CHANGELOG.md)
-- Architecture: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
-- Reviewer Notes: [docs/REVIEWER_NOTES.md](./docs/REVIEWER_NOTES.md)
+| Document | Link |
+|---|---|
+| Contributing | [CONTRIBUTING.md](./CONTRIBUTING.md) |
+| Architecture | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
+| Changelog | [docs/CHANGELOG.md](./docs/CHANGELOG.md) |
+| Security Policy | [docs/SECURITY.md](./docs/SECURITY.md) |
+| Privacy Policy | [PRIVACY.md](./PRIVACY.md) |
+| Code of Conduct | [docs/CODE_OF_CONDUCT.md](./docs/CODE_OF_CONDUCT.md) |
+| Reviewer Notes | [docs/REVIEWER_NOTES.md](./docs/REVIEWER_NOTES.md) |
 
 ## 🔐 Security
 
-- **Local Execution**: All logic runs locally in your browser.
-- **No Analytics**: We do not track your usage or data.
-- **Token Safety**: Your Consul token is stored in `chrome.storage.local` solely for making API calls on your behalf. It is never transmitted elsewhere.
+- **Local execution** — all logic runs in your browser. No backend, no relay.
+- **No analytics** — we do not track usage or transmit any data.
+- **Token safety** — on Chromium 102+, your Consul token is stored in `chrome.storage.session`, which is never written to disk and is automatically cleared when the browser closes. On Firefox, `chrome.storage.local` is used as a fallback. The token is used only to make Consul API calls on your behalf and is never transmitted elsewhere.
 
 ## 📄 License
 
@@ -216,5 +179,5 @@ This project is licensed under the [MIT License](https://github.com/ninadsutrave
 
 ## ✍️ Author
 
-**Ninad Sutrave**  
+**Ninad Sutrave**
 [ninadsutrave.in](https://ninadsutrave.in)

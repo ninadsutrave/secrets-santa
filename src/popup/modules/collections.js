@@ -42,19 +42,25 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
   /**
    * Deletes a collection by id and re-renders the list.
+   * groupedMode: pass true when deleting from a grouped (Load Saved) view so the
+   * remaining items re-render grouped by host rather than as a flat list.
    */
-  function deleteById(id, afterRenderHost) {
+  function deleteById(id, afterRenderHost, groupedMode) {
     getAll((collections) => {
       const next = (collections || []).filter((item) => (item.id || "") !== (id || ""));
       cfg.STORAGE.setCollections(next, () => {
         if (next.length === 0) {
           cfg.savedList.innerHTML = "";
-          cfg.setStatus("No collections remaining.");
+          cfg.setStatus("Santa deleted the last collection.");
           return;
         }
-        const scoped = afterRenderHost ? next.filter((c) => (c.host || "") === afterRenderHost) : next;
-        renderList(scoped);
-        cfg.setStatus("Collection deleted.");
+        if (groupedMode) {
+          renderList(next, true);
+        } else {
+          const scoped = afterRenderHost ? next.filter((c) => (c.host || "") === afterRenderHost) : next;
+          renderList(scoped);
+        }
+        cfg.setStatus("Santa deleted that collection.");
       });
     });
   }
@@ -133,11 +139,26 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
       del.setAttribute("data-tip", "Delete collection");
       del.addEventListener("click", (event) => {
         event.stopPropagation();
-        deleteById(collection.id, groupedMode ? null : collection.host);
-        // If grouped mode, we reload all. If not, we reload scoped.
-        // Actually deleteById currently reloads ALL from storage and then filters if afterRenderHost is set.
-        // We should fix deleteById to handle the refresh logic better or pass a callback.
-        // For now let's just let it re-render.
+        // Two-click confirmation: first click arms the button, second confirms.
+        // The armed state auto-resets after 3 s if the user changes their mind.
+        if (!del.dataset.armed) {
+          del.dataset.armed = "1";
+          del.textContent = "✓?";
+          del.setAttribute("data-tip", "Click again to confirm delete");
+          del.style.color = "#dc2626";
+          const reset = () => {
+            if (del.dataset.armed) {
+              delete del.dataset.armed;
+              del.textContent = "🗑";
+              del.setAttribute("data-tip", "Delete collection");
+              del.style.color = "";
+            }
+          };
+          del._resetTimeout = setTimeout(reset, 3000);
+        } else {
+          clearTimeout(del._resetTimeout);
+          deleteById(collection.id, groupedMode ? null : collection.host, groupedMode);
+        }
       });
 
       actions.appendChild(del);
@@ -147,7 +168,7 @@ globalThis.SECRETS_SANTA = globalThis.SECRETS_SANTA || {};
 
       item.addEventListener("click", () => {
         if (!collection.keys || Object.keys(collection.keys).length === 0) {
-          cfg.setStatus("This collection is empty.");
+          cfg.setStatus("Santa says this collection is empty.");
           return;
         }
         onLoadCollection(collection);
