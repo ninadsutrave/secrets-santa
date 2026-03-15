@@ -210,12 +210,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # ── Upload one artifact per browser (PR / master-push runs) ─────────────
-      # Split into three separate artifacts so reviewers can download exactly the
-      # browser package they need without unpacking a combined bundle.
+      # Each artifact is the store-submission-ready package for its target browser.
+      # Downloading and unzipping the artifact gives you the submission zip directly.
       #
-      #   extension-chrome   — zip + unpacked dist/ for Chrome and Brave
-      #   extension-edge     — zip only (same Chromium build, explicitly labelled)
-      #   extension-firefox  — zip + xpi + unpacked dist/ for Firefox
+      #   extension-chrome   — SecretsSanta-chromium.zip (Chrome / Brave)
+      #   extension-edge     — SecretsSanta-edge.zip     (same build, Edge label)
+      #   extension-firefox  — SecretsSanta-firefox.zip + SecretsSanta-firefox.xpi
       #
       # Retention: 14 days — long enough for PR review cycles, short enough to
       # avoid unbounded artifact storage growth on routine CI runs.
@@ -226,9 +226,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: extension-chrome
-          path: |
-            SecretsSanta-chromium.zip
-            dist/chromium
+          path: SecretsSanta-chromium.zip
           retention-days: 14
 
       - name: Upload Edge artifact
@@ -247,7 +245,6 @@ jobs:
           path: |
             SecretsSanta-firefox.zip
             SecretsSanta-firefox.xpi
-            dist/firefox
           retention-days: 14
 
       # ── Post / update a build comment on PRs ─────────────────────────────────
