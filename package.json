@@ -14,7 +14,7 @@
     "xpi:firefox": "npm run build:firefox && cd dist/firefox && rm -f ../../SecretsSanta-firefox.xpi && zip -r ../../SecretsSanta-firefox.xpi ."
   },
   "devDependencies": {
-    "esbuild": "^0.19.12",
+    "esbuild": "^0.28.0",
     "eslint": "^9.39.3"
   }
 }
