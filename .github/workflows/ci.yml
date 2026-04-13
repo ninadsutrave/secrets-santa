@@ -363,7 +363,7 @@ jobs:
           name: release-zips
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Auto-generate release notes from PR titles and commit messages.
           # Edit the release on GitHub after creation to add a manual changelog summary.
